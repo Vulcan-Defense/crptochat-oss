@@ -241,7 +241,16 @@ clientes atrás de CGNAT ou do mesmo escritório dividem um IP: se for o caso da
 sua comunidade, suba `conns_per_ip` (padrão 32) pelo console.
 
 O que fica em disco no servidor (`registry.db`): nick → chave pública, e
-nome/tipo/salt/verificador dos canais. Nenhuma mensagem, nenhum arquivo, nenhum log de conversa.
+nome/tipo/salt/verificador dos canais, as prekeys públicas de cada nick e,
+se a caixa postal estiver ligada, os envelopes cifrados deixados para quem
+está offline (destinatário, horário e bytes opacos; veja *Mensagens para quem
+está offline*). Nenhuma mensagem legível, nenhum arquivo, nenhum log de conversa.
+
+A caixa postal tem os seus limites, também ajustáveis pelo console:
+`mail_days` (14 dias; 0 desliga), `mail_per_user` (200 envelopes guardados
+por destinatário), `mail_per_sender` (50 de um mesmo remetente para um mesmo
+destinatário) e `prekey_fetch_per_hour` (30 pacotes de prekeys por usuário
+por hora, para ninguém esgotar as chaves de uso único dos outros).
 
 ## Cliente
 
@@ -384,6 +393,10 @@ Tudo o que o menu faz também existe como comando:
 | `/invite nick` | convida; em canal privado a chave do canal vai junto, cifrada de ponta a ponta |
 | `/rec`, `/play [n]`, `/stop` | grava/envia mensagem de voz, ouve, interrompe |
 | `/voicemask on\|off` | liga/desliga o disfarce de voz (padrão: ligado) |
+| `/reply [nick] texto` | responde à última mensagem (de `nick`, se dado), citando um trecho |
+| `/react [nick] 👍` | reage à última mensagem; `+1`, `ok`, `kkk`, `<3`, `fogo`… viram emoji |
+| `/edit texto`, `/del` | corrige ou apaga a sua última mensagem na janela |
+| `/receipts on\|off` | confirmação de leitura nas diretas (padrão: desligada; só vale se os dois ligarem) |
 | `/send nick\|#canal arquivo [--p2p]` | arquivo pelo servidor (padrão) ou direto, P2P |
 | `/accept [id]`, `/reject [id]` | aceita ou recusa um arquivo |
 | `/who`, `/whois nick`, `/fp` | fingerprints e número de segurança |
@@ -505,6 +518,26 @@ primeiro). `↓` vai aos resultados e `Enter` abre a janela na linha
 encontrada, destacada com `▶`. A busca só olha o que está na memória deste
 computador: nada vai ao servidor, mensagens temporárias vencidas já não
 existem para ela, e o que sumiu ao fechar o chat não volta.
+
+### Respostas, reações, edição e confirmação de leitura
+
+Tudo vai dentro das mensagens cifradas de ponta a ponta, com um id aleatório
+por mensagem; o servidor não distingue uma reação de uma mensagem comum.
+
+- `/reply` cita um trecho (até 80 caracteres) da mensagem respondida, e
+  quem recebe vê `↪ nick: «trecho»` antes do texto.
+- `/react` aparece ao lado da mensagem original (`👍 trinity`).
+- `/edit` troca o texto e marca `(editada)`; `/del` troca por `🗑 mensagem
+  apagada` e tira o texto da memória de quem recebe. Só o autor edita ou
+  apaga, e o cliente confere isso. **Apagar é um pedido**: quem já leu, leu,
+  e ninguém garante o que o outro cliente faz.
+- Clientes anteriores à 1.16 recebem um texto equivalente como mensagem
+  normal (`👍 (reagiu a “…”)`, `[editou] …`, `[apagou uma mensagem]`).
+- **Confirmação de leitura** (`/receipts on`) é desligada por padrão e só
+  nas diretas: quando a janela da conversa está aberta e o terminal em foco,
+  o cliente avisa quem escreveu, e a mensagem ganha `✓✓`. Só funciona se os
+  dois ligarem, e quem desliga também deixa de ver a dos outros. Ela revela
+  quando você leu: deixe desligada se isso importar.
 
 ### Mensagens temporárias
 
@@ -827,11 +860,13 @@ também o único jeito de mandar arquivo para quem usa cliente antigo.
 | ChaCha20-Poly1305 | cifra autenticada de mensagens e arquivos |
 | HKDF-SHA256 / HMAC-SHA256 | derivação de chaves e ratchet |
 | scrypt (N=2¹⁵) | senha da identidade local e senha dos canais privados |
+| ML-KEM-768 (FIPS 203) | camada pós-quântica das diretas e da caixa postal, misturada ao X25519 (com `cryptography` 47+) |
 
 Tudo vem da biblioteca [`cryptography`](https://cryptography.io); nenhuma cifra caseira.
 
-- **Diretas e sinalização**: ratchet por direção sobre chaves X25519
-  efêmeras, detalhado em *Sigilo das mensagens diretas* abaixo.
+- **Diretas e sinalização**: Double Ratchet sobre chaves X25519 efêmeras,
+  com ML-KEM-768 misturado à raiz, detalhado em *Sigilo das mensagens
+  diretas* abaixo.
 - **Canais**: cada membro tem uma cadeia própria (*sender key* com hash
   ratchet, uma chave por mensagem), entregue aos outros membros pelo envelope
   par a par. Quem entra depois recebe só o estado atual da cadeia e não lê o
@@ -845,7 +880,7 @@ Tudo vem da biblioteca [`cryptography`](https://cryptography.io); nenhuma cifra 
   sentidos até o usuário aceitar a nova (veja *Verificação de identidade*).
 - **Servidor**: TLS 1.3 com fingerprint fixada no primeiro acesso, como no SSH.
 
-### Sigilo das mensagens diretas (forward secrecy)
+### Sigilo das mensagens diretas (forward secrecy e Double Ratchet)
 
 Tudo o que vai direto de uma pessoa para outra (mensagens, áudio, as chaves
 dos canais, sinalização de arquivos e o `/ttl`) usa este protocolo:
@@ -880,6 +915,31 @@ dos canais, sinalização de arquivos e o `/ttl`) usa este protocolo:
    quem voltou com um cliente antigo recebe v1 de novo. Depois que o contato
    mandou um envelope v2 numa sessão, envelopes v1 dele nessa mesma sessão são
    recusados, porque v1 não tem proteção contra repetição.
+7. **Double Ratchet (envelope v3, cliente 1.12.0+).** Entre dois clientes
+   novos, a cada troca de vez quem começa a responder gera um par X25519
+   novo e a raiz absorve o DH entre essa chave e a última do outro lado:
+   `(RK, CK) = HKDF(salt=RK, DH(nova, última do outro))`. Dentro de cada vez,
+   as mensagens seguem a cadeia por HMAC do item 3. O envelope é
+   `0x03 | chave DH atual (32) | pn (4) | n (4) | ChaCha20-Poly1305(...)`,
+   com o cabeçalho no AAD; `pn` diz quantas mensagens foram na cadeia
+   anterior, para abrir as que chegarem fora de ordem (até 2000 chaves
+   guardadas, cada uma usada uma única vez). Os dois lados partem da raiz do
+   item 2: quem tem a chave de identidade menor faz o primeiro passo de DH já
+   no início, e o outro pode falar primeiro numa cadeia inicial derivada da
+   raiz. A negociação é a mesma do item 5 (capacidade `dr`): com clientes até
+   a 1.10 tudo continua em v2.
+
+8. **Camada pós-quântica (cliente 1.14.0+, ML-KEM-768).** Cada sessão também
+   tem um par ML-KEM-768 (FIPS 203), cuja chave pública vai dentro dos
+   envelopes cifrados até o outro lado usá-la. Na primeira vez que um lado faz
+   um passo de DH já conhecendo a chave ML-KEM do outro, ele também encapsula
+   para ela e mistura o segredo na raiz junto com o DH:
+   `(RK, CK) = HKDF(salt=RK, DH ‖ ss_ML-KEM)`. Todos os envelopes daquela vez
+   levam o texto cifrado do ML-KEM (`0x05 | dh | pn | n | 1088 bytes | AEAD`),
+   para que o outro lado faça a mesma mistura qualquer que seja o envelope que
+   chegue primeiro. Depois que os dois lados misturaram, os envelopes voltam
+   ao tamanho normal. Com clientes até a 1.13, ou sem `cryptography` 47+, tudo
+   segue como no item 7.
 
 O que isso garante:
 
@@ -889,16 +949,31 @@ O que isso garante:
   decifrado depois, nem com acesso total ao computador.
 - Cada mensagem usa uma chave própria, e repetição, reordenação e adulteração
   são recusadas.
+- **Cura depois de um vazamento (v3).** Quem copiar o estado de um cliente
+  no meio da conversa lê o que for cifrado com as chaves que existiam na
+  hora, mas perde o acesso assim que o dono do estado gera uma chave DH nova
+  (ao responder) e o outro lado responde a ela. Isso vale mesmo para quem
+  continua vendo todos os envelopes no servidor.
+- **Gravar hoje para decifrar com um computador quântico não funciona (1.14).**
+  Depois da mistura, a raiz guarda um segredo do ML-KEM: quem gravar o
+  tráfego e um dia quebrar o X25519 continua sem a raiz, e tudo o que deriva
+  dela fica fechado. A troca da chave ML-KEM vai dentro de envelopes já
+  autenticados, então o servidor não consegue removê-la. (A autenticação em
+  si continua sendo Ed25519: um computador quântico *no momento da conversa*
+  poderia se passar por alguém, mas não ler conversas gravadas.)
+- **Passado protegido dentro da sessão (v3).** As chaves DH de cada vez são
+  apagadas na troca seguinte; quem copiar a memória não recalcula as
+  mensagens de vezes anteriores.
 
 O que **não** garante:
 
-- **Dentro de uma sessão aberta não há sigilo para trás.** Enquanto a sessão
-  dura, a chave privada de sessão e a raiz ficam na memória do cliente (elas
-  são necessárias para falar com quem reconecta). Quem copiar essa memória
-  recalcula as cadeias desde o início e lê **toda a sessão**, antes e depois
-  da cópia, até alguém reconectar. Para fechar isso seria preciso o ratchet de
-  Diffie-Hellman a cada troca de mensagens (o Double Ratchet completo do
-  Signal), que não está implementado.
+- **A primeira vez de cada lado fica exposta enquanto a sessão dura.** A chave
+  privada de sessão e a raiz ficam na memória (são necessárias para falar com
+  quem reconecta), e o primeiro passo do ratchet sai delas. Quem copiar a
+  memória mais tarde, na mesma sessão, lê as mensagens de antes da primeira
+  troca de vez com aquele contato; o que veio depois fica protegido (item
+  anterior). Com contatos ainda em v2 vale o comportamento antigo: a cópia
+  da memória lê **toda a sessão** com eles, até alguém reconectar.
 - O servidor pode reapresentar uma chave de sessão antiga (assinada) de um
   contato; as mensagens cifradas para ela simplesmente não chegam, mas não há
   reuso de chave nem leitura. Ele também pode, como sempre, deixar de
@@ -906,10 +981,78 @@ O que **não** garante:
 - Com clientes 1.0.0 e anteriores, tudo fica em v1: a mesma chave para todas
   as DMs da sessão e sem proteção contra repetição.
 
+### Mensagens para quem está offline
+
+Desde a 1.13.0, uma mensagem direta para alguém desconectado fica guardada no
+servidor, cifrada de ponta a ponta, e é entregue quando a pessoa voltar (até
+`mail_days`, 14 dias por padrão). Vale para texto, `/ttl` e convites com a
+chave do canal; áudio e arquivos continuam exigindo os dois online. A
+conversa mostra `[offline · escrita dd/mm hh:mm]` em quem recebe.
+
+Como funciona (o esquema do X3DH do Signal, adaptado):
+
+1. **Prekeys.** Cada cliente registrado publica uma *prekey assinada* (X25519,
+   assinada com a identidade Ed25519, trocada toda semana) e um estoque de
+   100 *prekeys de uso único* (X25519). As partes privadas ficam no disco do
+   cliente, cifradas com uma chave derivada da identidade: só abrem depois
+   que a senha da chave é digitada.
+2. **Quem escreve** pede um pacote ao servidor: a prekey assinada e uma de uso
+   único, que o servidor entrega uma vez e apaga. Confere a assinatura com a
+   chave fixada do contato (TOFU / `/verify`), gera uma chave efêmera EK e
+   deriva `SK = HKDF(DH(EK, SPK) ‖ DH(EK, OPK))`, ligada à identidade de
+   quem recebe, ao EK e aos ids das prekeys. Dela sai uma cadeia por HMAC,
+   uma chave por envelope. A chave privada efêmera é descartada na hora.
+3. **O envelope** é `0x04 | EK | id da SPK | id da OPK | n | ChaCha20-Poly1305`.
+   Dentro dele vão o nick de quem escreveu, o horário, o conteúdo e uma
+   assinatura Ed25519 sobre tudo isso e sobre o cabeçalho. O servidor guarda
+   só destinatário, horário, validade e os bytes: **não sabe quem deixou a
+   mensagem** (a cota por remetente usa um HMAC com uma chave que só existe na
+   memória do processo e some quando ele reinicia).
+4. **Quem recebe**, ao conectar, abre os envelopes, confere a assinatura com
+   a chave fixada do remetente, apaga do disco as prekeys de uso único usadas
+   e só então confirma o recebimento; o servidor apaga os envelopes. Um
+   envelope reapresentado depois disso é recusado.
+
+**Pós-quântico (1.14.0+).** A prekey assinada ganha um par ML-KEM-768,
+também assinado com a identidade e trocado junto com ela. Quem escreve
+encapsula para essa chave e mistura o segredo com os DH, como no PQXDH do
+Signal: `SK = HKDF(DH1 ‖ DH2 ‖ ss_ML-KEM)`, com o texto cifrado no cabeçalho
+(envelope `0x05`, 1 KiB a mais). Depois de ver a chave pós-quântica de
+alguém, o cliente se recusa a mandar para essa pessoa sem ela: um servidor
+que a remova do pacote para forçar o modo clássico é pego.
+
+O que isso garante e o que não:
+
+- **Sigilo para a frente**: depois de lida, a mensagem não pode ser decifrada
+  nem com a identidade e as prekeys roubadas, porque a de uso único foi
+  apagada. Se as de uso único acabarem (alguém pediu pacotes demais), a
+  mensagem usa só a prekey assinada, e o sigilo para a frente passa a
+  depender da troca semanal dela (as antigas são apagadas depois de 22 dias).
+- **O servidor não forja nem lê**: a prekey precisa da assinatura do dono, e
+  o conteúdo da assinatura de quem escreveu.
+- **Metadados ficam mais tempo**: enquanto a mensagem espera, o servidor sabe
+  que *alguém* deixou algo para aquele nick e quando. Ele também vê quem pediu
+  o pacote de prekeys, o que no momento do envio indica o remetente.
+- **Uma instalação por nick**: as prekeys estão no disco de uma máquina. Se
+  o mesmo nick entrar de outra máquina, ela publica prekeys novas e a primeira
+  não abre o que foi selado para as dela.
+- Clientes até a 1.12 não publicam prekeys: para eles nada fica guardado e o
+  remetente é avisado de que a pessoa está offline, como antes.
+
 ### O que o servidor ainda enxerga
 
 Metadados: IPs, nicks online, quem está em qual canal, horário e tamanho
-aproximado (arredondado para 64 bytes) das mensagens, nomes dos canais.
+aproximado das mensagens, nomes dos canais.
+
+Sobre o tamanho: até 4 KiB, todo conteúdo cifrado é completado até a próxima
+potência de 2 (64, 128, 256 … 4096 bytes), então um "ok" e uma frase de umas 25
+letras têm exatamente o mesmo tamanho no fio, e um parágrafo só se distingue
+de outro pela faixa. Acima de 4 KiB (áudio, textos colados enormes) o
+arredondamento é de 64 bytes, para não dobrar o tráfego pesado (1.15.0+;
+clientes antigos leem os dois formatos). O horário de cada envelope continua
+visível: não há atraso aleatório nem tráfego de cobertura, que custariam
+latência e banda sem esconder quem conversa com quem de um servidor que vê
+as conexões.
 
 ### Limites que vale conhecer
 
@@ -923,7 +1066,8 @@ aproximado (arredondado para 64 bytes) das mensagens, nomes dos canais.
   servidor, a partir do verificador. Use `gerar` e convide com `/invite`
   (veja *Convites com a chave*), ou uma senha longa.
 - Mensagens de canal são assinadas, então não há negação plausível entre membros.
-- Sem entrega offline para conversas diretas: só recebe quem está conectado.
+- Entrega offline só para texto, `/ttl` e convites, e só para quem usa
+  cliente 1.13.0+ (veja *Mensagens para quem está offline*).
   Em canais privados com histórico ligado, quem entra depois vê as mensagens
   guardadas (veja *Histórico de canais privados* e o que isso enfraquece).
 - O código não passou por auditoria independente.

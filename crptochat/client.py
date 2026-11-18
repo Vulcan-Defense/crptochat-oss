@@ -31,6 +31,7 @@ from . import __version__, crypto
 from .crypto import Chain, CryptoError
 from .p2p import FileTransfers
 from .relayfile import RelayFiles
+from .mailbox import Mailbox, MailboxError
 from .protocol import (
     MAX_BODY,
     MAX_LINE,
@@ -47,7 +48,38 @@ from .protocol import (
 from .store import Identity, Store
 
 MAX_TEXT = 4000
-CLIENT_CAPS = ["dmr", "file2", "ci"]   # advertised to peers inside direct envelopes
+MAX_REACTION = 16           # characters of a reaction (an emoji, a short word)
+QUOTE = 80                  # characters of the replied-to message carried along
+
+
+def _mid(value) -> str | None:
+    """A message id as received (random hex made by the sender), or None."""
+    return value if isinstance(value, str) and 0 < len(value) <= 32 and value.isalnum() else None
+
+
+def _annotations(payload: dict, buffer: str, nick: str):
+    """Reactions, edits and deletions ride on ordinary messages, with a text
+    that older clients show as is ("x"). Returns (event kind, data) for a new
+    client, or None for a plain message."""
+    target = _mid(payload.get("to") or payload.get("ed") or payload.get("del"))
+    if target is None:
+        return None
+    if "r" in payload and payload.get("to"):
+        emoji = str(payload["r"])[:MAX_REACTION].strip()
+        return ("react", {"buffer": buffer, "nick": nick, "target": target, "emoji": emoji}) if emoji else None
+    if payload.get("ed"):
+        return "edit", {"buffer": buffer, "nick": nick, "target": target, "text": str(payload.get("t2", ""))[:MAX_TEXT]}
+    if payload.get("del"):
+        return "delete", {"buffer": buffer, "nick": nick, "target": target}
+    return None
+
+
+def _reply_of(payload: dict) -> dict | None:
+    re_ = payload.get("re")
+    if isinstance(re_, dict) and _mid(re_.get("id")) and valid_nick(re_.get("n")):
+        return {"id": re_["id"], "n": re_["n"], "q": str(re_.get("q") or "")[:QUOTE]}
+    return None
+CLIENT_CAPS = ["dmr", "dr", "file2", "ci"]   # advertised to peers inside direct envelopes
 AUDIO_CHUNK = 20_000        # raw bytes per relayed envelope
 MAX_AUDIO = 1_500_000
 MAX_AUDIO_PARTIAL = 8       # clips being received at the same time
@@ -87,7 +119,7 @@ class Peer:
         # root comes back and its chains continue instead of restarting at n=0.
         self._states: dict[bytes, dict] = {}
         self._burned: set[bytes] = set()        # evicted roots: never reused
-        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None}
+        self._cur: dict = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False, "peer_kem": None}
         self.hello: asyncio.Event | None = None
         self.dropped = False                    # told the user we refused a message from them
         self.guest = False
@@ -167,6 +199,8 @@ class ChatClient:
         self.pin = pin
         self.reg_token = reg_token
         self.guest = guest
+        self.caps = list(CLIENT_CAPS) + (["pq"] if crypto.HAS_MLKEM else [])   # what we tell peers we speak
+        self.receipts = False                  # read receipts: off unless the user turns them on
         self.nick = crypto.guest_nick(identity.ik) if guest else identity.nick
         self.key = self.nick.lower()
         self.role = "user"
@@ -183,10 +217,12 @@ class ChatClient:
         self.local_ip = ""
         self.public_ip = ""
         self.relay = RelayFiles(self)
+        self.mail = Mailbox(self)
         self._history_seen: dict[str, _SeenIds] = {}   # per channel, survives reconnects
         self.files = FileTransfers(self, p2p_port, p2p_host,
                                    download_dir or os.path.expanduser("~/Downloads/crptochat"))
         self._dh = None
+        self._kem = None          # ML-KEM-768 key pair of this session (post-quantum layer)
         self._writer: asyncio.StreamWriter | None = None
         self._pending: dict[int, tuple[asyncio.Future, object]] = {}
         self._next_id = 0
@@ -248,6 +284,7 @@ class ChatClient:
                 self.online = True
                 self.emit("status", state="online")
                 self.spawn(self._rejoin())
+                self.spawn(self._mail_sync())
                 ping = asyncio.create_task(self._ping_loop())
                 try:
                     await self._read_loop(reader)
@@ -300,6 +337,7 @@ class ChatClient:
                 raise ProtocolError("resposta inesperada do servidor")
             nonce = b64d(welcome.get("nonce"))
             self._dh = crypto.x_generate()
+            self._kem = crypto.kem_generate() if crypto.HAS_MLKEM else None
             dh = crypto.x_pub(self._dh)
             writer.write(encode({
                 "t": "auth", "id": 0, "nick": self.nick, "ik": b64e(self.identity.ik), "dh": b64e(dh),
@@ -329,7 +367,7 @@ class ChatClient:
         for peer in self.peers.values():
             # our session key is new: every old root (and its chain keys) is gone for good
             peer._pair, peer._states, peer._burned = None, {}, set()
-            peer._cur = {"dmr": False, "got_v2": False, "caps": None}
+            peer._cur = {"dmr": False, "got_v2": False, "caps": None, "dr": None, "v3": False, "peer_kem": None}
         if reply.get("registered"):
             self.sys(f"nickname '{self.nick}' registrado permanentemente neste servidor", "ok")
             self.sys("guarde bem sua senha: sem a chave local este nick nunca mais poderá ser usado", "warn")
@@ -342,6 +380,13 @@ class ChatClient:
         self.server_repo = repo if isinstance(repo, str) and len(repo) < 120 else None
         self.emit("welcome", server=self.server_name, motd=motd)
         return reader
+
+    async def _mail_sync(self) -> None:
+        try:
+            await self.mail.sync()
+        except (ChatError, MailboxError, CryptoError, ProtocolError, OSError) as exc:
+            if self.online:
+                self.sys(f"caixa postal: {exc}", "warn")
 
     async def _ping_loop(self) -> None:
         while True:
@@ -547,7 +592,8 @@ class ChatClient:
                     raise CryptoError("chave de sessão reaproveitada: recusada")
                 send, recv = crypto.dm_chains(root, self.identity.ik, peer.ik)
                 # a new pair of sessions: nothing is known about their client yet
-                state = {"dmr": False, "got_v2": False, "caps": None, "send": send, "recv": recv}
+                state = {"dmr": False, "got_v2": False, "caps": None, "send": send, "recv": recv,
+                         "dr": None, "v3": False, "peer_kem": None}
                 peer._states[root] = state
                 while len(peer._states) > self.MAX_ROOTS:
                     old = next(iter(peer._states))
@@ -561,15 +607,35 @@ class ChatClient:
         root = self._pair_key(peer)
         return root, peer._cur["send"], peer._cur["recv"]
 
+    def _ratchet(self, peer: Peer) -> crypto.DoubleRatchet:
+        """Double Ratchet state of the current pair of sessions (created on first use)."""
+        root = self._pair_key(peer)
+        state = peer._cur
+        if state.get("dr") is None:
+            state["dr"] = crypto.DoubleRatchet(root, self.identity.ik, peer.ik, self._dh, peer.dh,
+                                               self._kem, state.get("peer_kem"))
+        return state["dr"]
+
+    def _speaks_v3(self, peer: Peer) -> bool:
+        return "dr" in self.caps and (peer._cur.get("v3") or "dr" in (peer.caps or ()))
+
     def _direct_frame(self, peer: Peer, inner: dict) -> dict:
         self._pair_key(peer)          # selects the state of the current pair of sessions
-        if peer.dmr:
+        dr = peer._cur.get("dr")
+        if (self._kem is not None and "pq" in self.caps and not (dr and dr.pq_received)
+                and (peer.caps is None or "pq" in peer.caps)):
+            # our ML-KEM key goes along, end to end, until they have used it
+            # (and only while they may have the layer: older clients ignore it)
+            inner = {**inner, "kp": b64e(crypto.kem_pub(self._kem))}
+        if self._speaks_v3(peer):
+            body = self._ratchet(peer).encrypt(json.dumps(inner).encode(), crypto.dm_v3_aad(self.key, peer.key))
+        elif peer.dmr:
             _, send, _ = self._chains(peer)
             body = crypto.dm_encrypt(send, self.key, peer.key, json.dumps(inner).encode())
         else:
             # Older peer, or not known yet: v1 envelope, advertising that we
             # speak v2 (older clients ignore the extra field).
-            inner = {**inner, "cv": CLIENT_CAPS}
+            inner = {**inner, "cv": self.caps}
             aad = b"crptochat-direct-v1|" + self.key.encode() + b"|" + peer.key.encode()
             body = crypto.seal(self._pair_key(peer), crypto.pad(json.dumps(inner).encode()), aad)
         return {"t": "direct", "to": peer.nick, "body": b64e(body)}
@@ -704,7 +770,9 @@ class ChatClient:
         self.emit("member_leave", chan=ch.name, nick=peer.nick, kicked=msg.get("kicked"))
         self.emit("members", chan=ch.name)
 
-    def send_message(self, chan: str, text: str) -> None:
+    def send_message(self, chan: str, text: str, extra: dict | None = None, shown: str | None = None) -> str:
+        """Send to a channel; returns the message id. ``extra`` carries a reply,
+        reaction, edit or deletion (``text`` is then what older clients show)."""
         ch = self.channels.get(chan)
         if not ch or not ch.joined:
             raise ChatError("você não está conectado a este canal")
@@ -713,7 +781,10 @@ class ChatClient:
                             "moderated")
         text = text[:MAX_TEXT]
         ttl = self.ttl_for(chan)
-        payload = {"x": text, "ttl": ttl} if ttl else {"x": text}
+        mid = os.urandom(6).hex()
+        payload = {"x": text, "id": mid, **(extra or {})}
+        if ttl:
+            payload["ttl"] = ttl
         copy, line_id = self._history_copy(ch, text)
         if line_id:
             payload["hid"] = line_id          # lets members skip this line when the history comes later
@@ -727,11 +798,20 @@ class ChatClient:
             frame["h"] = copy
             self._seen_history(chan).add(line_id)
         self._send(frame)
-        self.emit("message", buffer=chan, nick=self.nick, text=text, mine=True, ttl=ttl)
+        self._emit_own(chan, text, mid, ttl, payload)
         if line_id and not copy:
             self.emit("system", text="esta mensagem não entrou no histórico do canal: passou do tamanho máximo "
                                      f"guardado ({self.history_body() // 1024} KiB); quem entrar depois não a verá",
                       level="warn", buffer=chan)
+        return mid
+
+    def _emit_own(self, buffer: str, text: str, mid: str, ttl: int, payload: dict) -> None:
+        note = _annotations(payload, buffer, self.nick)
+        if note:
+            self.emit(note[0], **note[1])
+        else:
+            self.emit("message", buffer=buffer, nick=self.nick, text=text, mine=True, ttl=ttl, mid=mid,
+                      reply=_reply_of(payload))
 
     def _on_msg(self, msg: dict) -> None:
         ch = self.channels.get(msg["chan"])
@@ -759,7 +839,12 @@ class ChatClient:
             return
         if isinstance(payload.get("hid"), str):
             self._seen_history(ch.name).add(payload["hid"][:64])      # already seen live
-        self.emit("message", buffer=ch.name, nick=peer.nick, text=text, mine=False, ttl=ttl)
+        note = _annotations(payload, ch.name, peer.nick)
+        if note:
+            self.emit(note[0], **note[1])
+            return
+        self.emit("message", buffer=ch.name, nick=peer.nick, text=text, mine=False, ttl=ttl,
+                  mid=_mid(payload.get("id")), reply=_reply_of(payload))
 
     # -------------------------------------------------- direct envelopes
 
@@ -792,7 +877,13 @@ class ChatClient:
     def _open_direct(self, peer: Peer, body: bytes) -> None:
         plain = None
         root = self._pair_key(peer)
-        if body[:1] == bytes([crypto.DM_V2]):
+        if body[:1] in (bytes([crypto.DM_V3]), bytes([crypto.DM_V3_PQ])) and "dr" in self.caps:
+            try:
+                plain = self._ratchet(peer).decrypt(body, crypto.dm_v3_aad(peer.key, self.key))
+                peer._cur["v3"] = peer._cur["dmr"] = peer._cur["got_v2"] = True
+            except CryptoError:
+                plain = None    # a v1 nonce can start with the same byte: try v1 below
+        if plain is None and body[:1] == bytes([crypto.DM_V2]):
             try:
                 _, _, recv = self._chains(peer)
                 plain = crypto.dm_decrypt(recv, peer.key, self.key, body)
@@ -808,10 +899,28 @@ class ChatClient:
             plain = crypto.unpad(crypto.unseal(root, body, aad))
         try:
             inner = json.loads(plain)
-            kind = inner["k"]
+            inner["k"]
         except (ValueError, KeyError, TypeError):
             return
-        if isinstance(inner.get("cv"), list):
+        self._on_inner(peer, inner)
+
+    def _on_inner(self, peer: Peer, inner: dict, sent: int = 0) -> None:
+        """Act on the content of a direct envelope. ``sent`` is set for what
+        was left in the mailbox while we were offline (time it was written)."""
+        kind = inner.get("k")
+        if sent and kind not in ("dm", "ttl", "ci"):
+            return
+        if inner.get("kp") and not sent and crypto.HAS_MLKEM and "pq" in self.caps:
+            try:
+                kp = b64d(inner["kp"], crypto.KEM_PUB)
+            except ProtocolError:
+                kp = None
+            if kp is not None:
+                peer._cur["peer_kem"] = kp
+                dr = peer._cur.get("dr")
+                if dr is not None and dr.peer_kem is None:
+                    dr.peer_kem = kp
+        if isinstance(inner.get("cv"), list) and not sent:
             peer.caps = {c for c in inner["cv"] if isinstance(c, str)}
             if "dmr" in peer.caps:
                 peer.dmr = True     # from now on we answer with ratcheted envelopes
@@ -821,7 +930,7 @@ class ChatClient:
                 peer.hello.set()
             if not inner.get("r"):
                 try:
-                    self.send_direct(peer, {"k": "hi", "r": 1, "cv": CLIENT_CAPS})
+                    self.send_direct(peer, {"k": "hi", "r": 1, "cv": self.caps})
                 except (ChatError, CryptoError):
                     pass
             return
@@ -839,6 +948,18 @@ class ChatClient:
                 self._on_audio_chunk("@" + peer.nick, peer, inner["a"])
             except (ProtocolError, ValueError, KeyError, TypeError):
                 pass
+        elif kind == "dm" and "x" in inner and _annotations(inner, "@" + peer.nick, peer.nick):
+            note = _annotations(inner, "@" + peer.nick, peer.nick)
+            self.emit(note[0], **note[1])
+        elif kind == "rd":
+            ids = [i for i in inner.get("ids") or [] if _mid(i)][:200] if isinstance(inner.get("ids"), list) else []
+            if ids and self.receipts:
+                self.emit("read", buffer="@" + peer.nick, nick=peer.nick, ids=ids)
+        elif kind == "dm" and sent:
+            if "x" in inner:
+                ttl = self._effective_ttl(inner.get("ttl"), self.dm_ttl(peer.nick))
+                self.emit("message", buffer="@" + peer.nick, nick=peer.nick, text=str(inner.get("x"))[:MAX_TEXT],
+                          mine=False, ttl=ttl, sent=sent, mid=_mid(inner.get("id")), reply=_reply_of(inner))
         elif kind == "dm":
             if self.away and not inner.get("auto") and peer.key not in self._away_told:
                 # Like IRC's away, but the text goes end to end and each
@@ -851,7 +972,7 @@ class ChatClient:
                     pass
             ttl = self._effective_ttl(inner.get("ttl"), self.dm_ttl(peer.nick))
             self.emit("message", buffer="@" + peer.nick, nick=peer.nick, text=str(inner.get("x"))[:MAX_TEXT],
-                      mine=False, ttl=ttl)
+                      mine=False, ttl=ttl, mid=_mid(inner.get("id")), reply=_reply_of(inner))
         elif kind == "ttl":
             # disappearing messages for this conversation, agreed end to end
             seconds = inner.get("s")
@@ -886,14 +1007,86 @@ class ChatClient:
         for body in waiting:
             self._deliver(ch, peer, body)
 
-    async def send_dm(self, nick: str, text: str) -> str:
-        peer = self._usable(await self.resolve(nick))
+    async def _send_or_leave(self, nick: str, inner) -> tuple[Peer, dict | None]:
+        """Deliver a direct envelope now, or leave it in the mailbox if they are
+        offline. ``inner`` may be a function of the contact (for the TTL).
+        Returns (peer, None) when delivered live, (peer, mailbox reply) otherwise."""
+        for _ in range(3):
+            peer = await self.resolve(nick)
+            content = inner(peer) if callable(inner) else inner
+            if peer.trusted and peer.dh:
+                try:
+                    await self.request(self._direct_frame(peer, content))
+                    return peer, None
+                except ChatError as exc:
+                    if exc.code != "offline":
+                        raise
+                    peer.dh = None                       # left meanwhile: leave it for later
+            if not peer.trusted:
+                self._usable(peer)                       # raises with the explanation
+            if not self.mail.available:
+                raise ChatError(f"{peer.nick} está offline", "offline")
+            try:
+                return peer, await self.mail.send(peer, content)
+            except MailboxError as exc:
+                raise ChatError(str(exc), exc.code) from None
+            except ChatError as exc:
+                if exc.code != "online":                 # came back meanwhile: try live again
+                    raise
+        raise ChatError(f"não consegui entregar a {nick}", "offline")
+
+    def _left_note(self, peer: Peer, reply: dict | None) -> None:
+        if reply is not None:
+            days = reply.get("days") or self.server_limits.get("mail_days") or 14
+            self.sys(f"{peer.nick} está offline: a mensagem ficou na caixa postal, cifrada de ponta a ponta, "
+                     f"e será entregue quando ele voltar (até {int(days)} dias)", "info", "@" + peer.nick)
+
+    async def send_dm(self, nick: str, text: str, extra: dict | None = None) -> str:
         text = text[:MAX_TEXT]
-        ttl = self.dm_ttl(peer.nick)
-        inner = {"k": "dm", "x": text, "ttl": ttl} if ttl else {"k": "dm", "x": text}
-        await self.request(self._direct_frame(peer, inner))
-        self.emit("message", buffer="@" + peer.nick, nick=self.nick, text=text, mine=True, ttl=ttl)
+        mid = os.urandom(6).hex()
+
+        def content(peer: Peer) -> dict:
+            ttl = self.dm_ttl(peer.nick)
+            inner = {"k": "dm", "x": text, "id": mid, **(extra or {})}
+            if ttl:
+                inner["ttl"] = ttl
+            return inner
+        peer, left = await self._send_or_leave(nick, content)
+        self._emit_own("@" + peer.nick, text, mid, self.dm_ttl(peer.nick), content(peer))
+        self._left_note(peer, left)
         return peer.nick
+
+    def send_read(self, nick: str, ids: list[str]) -> None:
+        """Read receipt (only when we turned them on, and only to someone online)."""
+        peer = self.peers.get(nick.lower())
+        ids = [i for i in ids if _mid(i)][:200]
+        if not self.receipts or not ids or not peer or not peer.trusted or not peer.dh:
+            return
+        try:
+            self.send_direct(peer, {"k": "rd", "ids": ids})
+        except (ChatError, CryptoError):
+            pass
+
+    async def annotate(self, buffer: str, kind: str, target: dict, value: str = "") -> None:
+        """React to, edit or delete a message (target: {"id", "n", "text"}).
+        Older clients see the fallback text instead."""
+        quote = str(target.get("text") or "")[:40]
+        if kind == "react":
+            value = value.strip()[:MAX_REACTION]
+            extra, text = {"r": value, "to": target["id"]}, f"{value} (reagiu a “{quote}”)"
+        elif kind == "edit":
+            extra, text = {"ed": target["id"], "t2": value[:MAX_TEXT]}, f"[editou] {value}"
+        elif kind == "delete":
+            extra, text = {"del": target["id"]}, "[apagou uma mensagem]"
+        elif kind == "reply":
+            extra = {"re": {"id": target["id"], "n": target["n"], "q": str(target.get("text") or "")[:QUOTE]}}
+            text = value
+        else:
+            raise ChatError("ação desconhecida")
+        if buffer.startswith("#"):
+            self.send_message(buffer, text, extra)
+        else:
+            await self.send_dm(buffer[1:], text, extra)
 
     # --------------------------------------------------------- voice messages
 
@@ -1066,16 +1259,22 @@ class ChatClient:
         reply = await self.request({"t": "invite", "chan": chan, "nick": nick})
         ch = self.channels.get(chan)
         reply["keys_sent"] = False
-        if ch and ch.private and ch.auth and ch.psk and reply.get("online"):
+        if ch and ch.private and ch.auth and ch.psk:
+            inner = {"k": "ci", "chan": chan, "a": b64e(ch.auth), "p": b64e(ch.psk)}
+            if ch.hkey:
+                inner["h"] = b64e(ch.hkey)
             try:
-                peer = self._usable(await self.resolve(nick))
-                if await self.peer_supports(peer, "ci"):
-                    inner = {"k": "ci", "chan": chan, "a": b64e(ch.auth), "p": b64e(ch.psk)}
-                    if ch.hkey:
-                        inner["h"] = b64e(ch.hkey)
-                    await self.request(self._direct_frame(peer, inner))
-                    reply["keys_sent"] = True
-            except (ChatError, CryptoError):
+                if reply.get("online"):
+                    peer = self._usable(await self.resolve(nick))
+                    if await self.peer_supports(peer, "ci"):
+                        await self.request(self._direct_frame(peer, inner))
+                        reply["keys_sent"] = True
+                elif self.mail.available:
+                    # offline: the keys wait in their mailbox, sealed to their prekeys
+                    peer = await self.resolve(nick)
+                    await self.mail.send(peer, inner)
+                    reply["keys_sent"] = reply["keys_left"] = True
+            except (ChatError, CryptoError, MailboxError):
                 pass
         return reply
 
@@ -1173,8 +1372,8 @@ class ChatClient:
 
     async def set_dm_ttl(self, nick: str, seconds: int) -> str:
         """Agree on a timer with the other person (end to end; the server never knows)."""
-        peer = self._usable(await self.resolve(nick))
-        await self.request(self._direct_frame(peer, {"k": "ttl", "s": seconds}))
+        peer, left = await self._send_or_leave(nick, {"k": "ttl", "s": seconds})
+        self._left_note(peer, left)
         self.store.set_dm_ttl(peer.nick, seconds)
         self.emit("dm_ttl", nick=peer.nick, seconds=seconds, by=self.nick)
         return peer.nick
@@ -1186,7 +1385,7 @@ class ChatClient:
         if peer.caps is None:
             peer.hello = asyncio.Event()
             try:
-                self.send_direct(peer, {"k": "hi", "cv": CLIENT_CAPS})
+                self.send_direct(peer, {"k": "hi", "cv": self.caps})
                 await asyncio.wait_for(peer.hello.wait(), timeout)
             except (asyncio.TimeoutError, ChatError, CryptoError):
                 peer.caps = set()

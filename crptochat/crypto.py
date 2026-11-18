@@ -7,6 +7,7 @@ Primitives (all from the `cryptography` library, no home-made ciphers):
   * HKDF-SHA256        key derivation
   * HMAC-SHA256        symmetric hash ratchet for channel messages
   * scrypt             passphrase stretching (identity file, private channels)
+  * ML-KEM-768         post-quantum key encapsulation, mixed with X25519 (when available)
 """
 
 from __future__ import annotations
@@ -37,6 +38,13 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
+
+try:      # ML-KEM (FIPS 203) arrived in cryptography 47; without it, no post-quantum layer
+    from cryptography.hazmat.primitives.asymmetric import mlkem as _mlkem
+    HAS_MLKEM = True
+except ImportError:      # pragma: no cover
+    _mlkem = None
+    HAS_MLKEM = False
 
 SCRYPT_N = 2 ** 15
 PAD_BLOCK = 64
@@ -72,6 +80,43 @@ def x_generate() -> X25519PrivateKey:
 
 def x_pub(key: X25519PrivateKey) -> bytes:
     return key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+
+KEM_PUB = 1184          # ML-KEM-768 encapsulation key
+KEM_CT = 1088           # ML-KEM-768 ciphertext
+
+
+def kem_generate():
+    return _mlkem.MLKEM768PrivateKey.generate()
+
+
+def kem_pub(key) -> bytes:
+    return key.public_key().public_bytes_raw()
+
+
+def kem_seed(key) -> bytes:
+    return key.private_bytes_raw()
+
+
+def kem_from_seed(seed: bytes):
+    return _mlkem.MLKEM768PrivateKey.from_seed_bytes(seed)
+
+
+def kem_encap(pub: bytes) -> tuple[bytes, bytes]:
+    """(shared secret, ciphertext) for the holder of ``pub``."""
+    try:
+        return _mlkem.MLKEM768PublicKey.from_public_bytes(pub).encapsulate()
+    except (ValueError, TypeError) as exc:
+        raise CryptoError("bad ML-KEM key") from exc
+
+
+def kem_decap(key, ct: bytes) -> bytes:
+    if key is None or len(ct) != KEM_CT:
+        raise CryptoError("no ML-KEM key for this ciphertext")
+    try:
+        return key.decapsulate(ct)
+    except (ValueError, TypeError) as exc:
+        raise CryptoError("bad ML-KEM ciphertext") from exc
 
 
 def sign(key: Ed25519PrivateKey, message: bytes) -> bytes:
@@ -204,10 +249,30 @@ def dh_message(nick: str, dh: bytes) -> bytes:
 
 # ------------------------------------------------------------------- AEAD
 
+PAD_BUCKET_MAX = 4096
+
+
+def padded_size(length: int) -> int:
+    """Size after padding ``length`` bytes (the 0x80 marker included).
+
+    Up to 4 KiB, the next power of two (64, 128, 256 ... 4096): a short "ok"
+    and a whole paragraph look the same on the wire, which matters because
+    short messages are most of a conversation. Above that (voice, files,
+    long pastes), multiples of 64 bytes, so bulky traffic does not double."""
+    length += 1
+    if length <= PAD_BUCKET_MAX:
+        size = PAD_BLOCK
+        while size < length:
+            size *= 2
+        return size
+    return length + (-length % PAD_BLOCK)
+
+
 def pad(data: bytes) -> bytes:
-    """ISO/IEC 7816-4 padding to hide exact message length."""
-    data += b"\x80"
-    return data + b"\x00" * (-len(data) % PAD_BLOCK)
+    """ISO/IEC 7816-4 padding to hide the exact message length (see padded_size).
+    Any padding length opens with unpad, so older clients read it as before."""
+    size = padded_size(len(data))
+    return data + b"\x80" + b"\x00" * (size - len(data) - 1)
 
 
 def unpad(data: bytes) -> bytes:
@@ -366,3 +431,293 @@ def file_decrypt_chunk(key: bytes, index: int, blob: bytes, last: bool) -> bytes
         return ChaCha20Poly1305(key).decrypt(nonce, blob, b"\x01" if last else b"\x00")
     except InvalidTag as exc:
         raise CryptoError("file chunk authentication failed") from exc
+
+
+# ------------------------------------------- direct messages: Double Ratchet (v3)
+#
+# On top of the per-direction hash ratchet (v2), every change of turn brings a
+# fresh X25519 key: whoever starts answering generates a new key pair and the
+# root key absorbs DH(new key, the other's latest key). Someone who copies a
+# client's state therefore loses access as soon as the other side answers with
+# a key they do not know (post-compromise security), besides the forward
+# secrecy the chains already give. Envelope layout:
+#     0x03 | dh (32) | pn (4) | n (4) | ChaCha20-Poly1305(mk, zero nonce, pad(plaintext))
+# dh is the sender's current ratchet key, pn how many messages the sender
+# sent on its previous chain, n the index on the current one. The header is
+# authenticated (AAD) but not encrypted.
+#
+# Post-quantum layer (ML-KEM-768, when both clients have it): each session also
+# has an ML-KEM key pair, whose public part travels inside the encrypted
+# envelopes ("kp"). The first time a side makes a DH step knowing the other's
+# ML-KEM key, it also encapsulates to it and mixes the shared secret into the
+# root together with the DH output: (RK, CK) = HKDF(salt=RK, DH || ss_mlkem).
+# Every envelope of that chain carries the ciphertext:
+#     0x05 | dh (32) | pn (4) | n (4) | ML-KEM ciphertext (1088) | AEAD
+# so the side that receives it, whichever envelope arrives first, makes the
+# same mix. From then on the root (and everything derived from it) holds a
+# secret that a quantum computer would not recover from the recorded traffic.
+
+DM_V3 = 0x03
+DM_V3_PQ = 0x05           # same, with an ML-KEM ciphertext after the header (see below)
+DR_HEADER = 32 + 4 + 4
+MAX_SKIPPED = 2000            # message keys kept for envelopes that arrive out of order
+
+
+def _dr_aad(prefix: bytes, kind: int, header: bytes) -> bytes:
+    # v3 as in 1.12 (no type byte); the post-quantum variant also binds its type
+    return prefix + header if kind == DM_V3 else prefix + bytes([kind]) + header
+
+
+def _kdf_rk(rk: bytes, dh_out: bytes) -> tuple[bytes, bytes]:
+    out = HKDF(algorithm=hashes.SHA256(), length=64, salt=rk, info=b"crptochat-dr-rk-v1").derive(dh_out)
+    return out[:32], out[32:]
+
+
+def _dh(priv: X25519PrivateKey, pub: bytes) -> bytes:
+    try:
+        return priv.exchange(X25519PublicKey.from_public_bytes(pub))
+    except ValueError as exc:
+        raise CryptoError("bad ratchet key") from exc
+
+
+class DoubleRatchet:
+    """State of one pair of sessions. Both sides start from the pairwise key of
+    the sessions (``root``) and their signed session keys; the side with the
+    lower identity key plays Alice (makes the first DH step right away), the
+    other one may still send first, on an initial chain both can derive."""
+
+    def __init__(self, root: bytes, my_ik: bytes, peer_ik: bytes, my_dh: X25519PrivateKey, peer_dh: bytes,
+                 my_kem=None, peer_kem: bytes | None = None):
+        lo, hi = sorted((my_ik, peer_ik))
+        self.my_kem, self.peer_kem = my_kem, peer_kem
+        self.send_ct: bytes | None = None       # ML-KEM ciphertext of the current sending chain
+        self.pq_sent = self.pq_received = False
+        rk = hkdf(root, b"crptochat-dr-root-v1|" + lo + hi)
+        first = hkdf(root, b"crptochat-dr-first-v1|" + lo + hi)     # chain of Bob's first messages
+        self.skipped: dict[tuple[bytes, int], bytes] = {}
+        self.ns = self.nr = self.pn = 0
+        if my_ik == lo:     # Alice
+            self.dhs = X25519PrivateKey.generate()
+            self.dhr: bytes | None = peer_dh
+            self.ckr: bytes | None = first
+            self.rk = rk
+            self.cks = self._sending_step(peer_dh)
+        else:               # Bob
+            self.dhs, self.dhr, self.ckr = my_dh, None, None
+            self.rk, self.cks = rk, first
+
+    # a state is replaced only when an envelope opened: copy, work, commit
+    def _copy(self) -> "DoubleRatchet":
+        new = object.__new__(DoubleRatchet)
+        new.__dict__.update(self.__dict__)
+        new.skipped = dict(self.skipped)
+        return new
+
+    @property
+    def pq(self) -> bool:
+        """The root already holds an ML-KEM secret (in either direction)."""
+        return self.pq_sent or self.pq_received
+
+    def _sending_step(self, their_dh: bytes) -> bytes:
+        """DH step for a new sending chain (self.dhs is the new key); mixes an
+        ML-KEM secret the first time the other's ML-KEM key is known."""
+        secret = _dh(self.dhs, their_dh)
+        self.send_ct = None
+        if self.peer_kem is not None and not self.pq_sent and HAS_MLKEM:
+            ss, self.send_ct = kem_encap(self.peer_kem)
+            secret += ss
+            self.pq_sent = True
+        self.rk, cks = _kdf_rk(self.rk, secret)
+        return cks
+
+    @staticmethod
+    def _step(ck: bytes) -> tuple[bytes, bytes]:
+        return hmac.new(ck, b"\x02", hashlib.sha256).digest(), hmac.new(ck, b"\x01", hashlib.sha256).digest()
+
+    def encrypt(self, plaintext: bytes, aad_prefix: bytes) -> bytes:
+        header = x_pub(self.dhs) + struct.pack(">II", self.pn, self.ns)
+        kind = DM_V3
+        if self.send_ct is not None:
+            header, kind = header + self.send_ct, DM_V3_PQ
+        self.cks, mk = self._step(self.cks)
+        self.ns += 1
+        ct = ChaCha20Poly1305(mk).encrypt(ZERO_NONCE, pad(plaintext), _dr_aad(aad_prefix, kind, header))
+        return bytes([kind]) + header + ct
+
+    def _skip(self, until: int) -> None:
+        if self.ckr is None:
+            return
+        if until - self.nr > MAX_CHAIN_SKIP:
+            raise CryptoError("chain gap too large")
+        while self.nr < until:
+            self.ckr, mk = self._step(self.ckr)
+            self.skipped[(self.dhr, self.nr)] = mk
+            self.nr += 1
+            while len(self.skipped) > MAX_SKIPPED:
+                del self.skipped[next(iter(self.skipped))]
+
+    def decrypt(self, body: bytes, aad_prefix: bytes) -> bytes:
+        """Open an envelope; the state changes only if it opens."""
+        size = {DM_V3: DR_HEADER, DM_V3_PQ: DR_HEADER + KEM_CT}.get(body[0] if body else -1)
+        if size is None or len(body) < 1 + size + 16:
+            raise CryptoError("not a v3 direct envelope")
+        header, ct = body[1:1 + size], body[1 + size:]
+        dh, (pn, n) = header[:32], struct.unpack(">II", header[32:40])
+        kem_ct = header[40:] or None
+        aad = _dr_aad(aad_prefix, body[0], header)
+
+        def open_with(mk: bytes) -> bytes:
+            try:
+                return unpad(ChaCha20Poly1305(mk).decrypt(ZERO_NONCE, ct, aad))
+            except InvalidTag as exc:
+                raise CryptoError("decryption failed") from exc
+
+        mk = self.skipped.get((dh, n))
+        if mk is not None:                       # arrived late, after later ones
+            plaintext = open_with(mk)
+            del self.skipped[(dh, n)]
+            return plaintext
+        work = self._copy()
+        if dh != work.dhr:                       # they changed turn: DH ratchet step
+            work._skip(pn)
+            work.pn, work.ns, work.nr = work.ns, 0, 0
+            work.dhr = dh
+            secret = _dh(work.dhs, dh)
+            if kem_ct is not None:               # they mixed an ML-KEM secret into this step
+                secret += kem_decap(work.my_kem, kem_ct)
+                work.pq_received = True
+            work.rk, work.ckr = _kdf_rk(work.rk, secret)
+            work.dhs = X25519PrivateKey.generate()
+            work.cks = work._sending_step(dh)
+        if n < work.nr:
+            raise CryptoError("replayed or old direct message")
+        work._skip(n)
+        work.ckr, mk = work._step(work.ckr)
+        work.nr += 1
+        plaintext = open_with(mk)
+        self.__dict__.update(work.__dict__)
+        return plaintext
+
+
+def dm_v3_aad(sender: str, recipient: str) -> bytes:
+    return b"crptochat-dm-v3|" + sender.lower().encode() + b"|" + recipient.lower().encode() + b"|"
+
+
+# --------------------------------------------- offline messages (mailbox, v1)
+#
+# X3DH-style start for someone who is offline. The recipient publishes a signed
+# X25519 prekey (SPK, rotated) and one-time X25519 prekeys (OPK, each handed out
+# once by the server). The sender makes an ephemeral key EK and derives
+#     SK = HKDF(DH(EK, SPK) || DH(EK, OPK), "crptochat-mail-v1" | ik_B | EK | ids)
+# then a hash chain from SK, one key per envelope. Envelope (opaque to the
+# server, which stores only the recipient and the time):
+#     0x04 | EK (32) | spk_id (4) | opk_id (4, 0xFFFFFFFF: none) | n (4) | AEAD
+# Who wrote it travels inside the AEAD, with an Ed25519 signature over the
+# header, recipient, sender, time and content: the server never learns the
+# sender from the stored envelope, and cannot forge one.
+
+MAIL_V1 = 0x04
+MAIL_PQ = 0x05            # same, plus an ML-KEM-768 ciphertext to the recipient's signed KEM prekey
+NO_OPK = 0xFFFFFFFF
+MAIL_PREFIX = 1 + 32 + 4 + 4
+MAIL_HEADER = MAIL_PREFIX + 4
+MAX_MAIL_INDEX = 10_000
+
+
+def spk_message(nick: str, spk_id: int, spk: bytes) -> bytes:
+    return b"crptochat-spk-v1|" + nick.lower().encode() + b"|" + str(spk_id).encode() + b"|" + spk
+
+
+def kem_prekey_message(nick: str, spk_id: int, kem: bytes) -> bytes:
+    return b"crptochat-kem-prekey-v1|" + nick.lower().encode() + b"|" + str(spk_id).encode() + b"|" + kem
+
+
+def mail_header_len(body: bytes) -> int:
+    if body[:1] == bytes([MAIL_PQ]):
+        return MAIL_HEADER + KEM_CT
+    return MAIL_HEADER
+
+
+def _mail_info(recipient_ik: bytes, ek: bytes, spk_id: int, opk_id: int) -> bytes:
+    return b"crptochat-mail-v1|" + recipient_ik + ek + struct.pack(">II", spk_id, opk_id)
+
+
+def mail_start(recipient_ik: bytes, spk_id: int, spk: bytes, opk_id: int | None, opk: bytes | None,
+               kem: bytes | None = None) -> tuple[bytes, bytes]:
+    """Sender side: (header prefix, SK). The ephemeral private key is not kept.
+    With the recipient's ML-KEM prekey, its shared secret joins the DH ones
+    (as in Signal's PQXDH) and the ciphertext goes in the header."""
+    ek = X25519PrivateKey.generate()
+    ek_pub = x_pub(ek)
+    secret = _dh(ek, spk) + (_dh(ek, opk) if opk is not None else b"")
+    oid = NO_OPK if opk_id is None else opk_id
+    ids = struct.pack(">II", spk_id, oid)
+    if kem is not None and HAS_MLKEM:
+        ss, ct = kem_encap(kem)
+        sk = hkdf(secret + ss, _mail_info(recipient_ik, ek_pub, spk_id, oid) + b"|mlkem768|" + ct)
+        return bytes([MAIL_PQ]) + ek_pub + ids + ct, sk
+    sk = hkdf(secret, _mail_info(recipient_ik, ek_pub, spk_id, oid))
+    return bytes([MAIL_V1]) + ek_pub + ids, sk
+
+
+def mail_parse(body: bytes) -> tuple[bytes, int, int | None, int]:
+    """(EK, spk_id, opk_id or None, n) of an envelope; raises CryptoError."""
+    if not body or body[0] not in (MAIL_V1, MAIL_PQ) or len(body) < mail_header_len(body) + 16:
+        raise CryptoError("not a mailbox envelope")
+    spk_id, opk_id = struct.unpack(">II", body[33:MAIL_PREFIX])
+    n = struct.unpack(">I", body[mail_header_len(body) - 4:mail_header_len(body)])[0]
+    if n > MAX_MAIL_INDEX:
+        raise CryptoError("mailbox index too large")
+    return body[1:33], spk_id, None if opk_id == NO_OPK else opk_id, n
+
+
+def mail_kem_ct(body: bytes) -> bytes | None:
+    return body[MAIL_PREFIX:MAIL_PREFIX + KEM_CT] if body[:1] == bytes([MAIL_PQ]) else None
+
+
+def mail_secret(recipient_ik: bytes, ek: bytes, spk_id: int, spk_priv: X25519PrivateKey,
+                opk_id: int | None, opk_priv: X25519PrivateKey | None,
+                kem_priv=None, kem_ct: bytes | None = None) -> bytes:
+    """Recipient side: the same SK."""
+    secret = _dh(spk_priv, ek) + (_dh(opk_priv, ek) if opk_priv is not None else b"")
+    info = _mail_info(recipient_ik, ek, spk_id, NO_OPK if opk_id is None else opk_id)
+    if kem_ct is not None:
+        return hkdf(secret + kem_decap(kem_priv, kem_ct), info + b"|mlkem768|" + kem_ct)
+    return hkdf(secret, info)
+
+
+def _mail_aad(recipient: str, header: bytes) -> bytes:
+    return b"crptochat-mail-v1|" + recipient.lower().encode() + b"|" + header
+
+
+def mail_signed(header: bytes, recipient: str, sender: str, ts: int, payload: str) -> bytes:
+    return (b"crptochat-mail-sig-v1|" + header + b"|" + recipient.lower().encode() + b"|"
+            + sender.lower().encode() + b"|" + str(ts).encode() + b"|" + payload.encode())
+
+
+def mail_encrypt(chain: Chain, prefix: bytes, recipient: str, plaintext: bytes) -> bytes:
+    n, mk = chain.step()
+    header = prefix + struct.pack(">I", n)
+    return header + ChaCha20Poly1305(mk).encrypt(ZERO_NONCE, pad(plaintext), _mail_aad(recipient, header))
+
+
+def mail_decrypt(sk: bytes, recipient: str, body: bytes) -> bytes:
+    _, _, _, n = mail_parse(body)
+    chain = Chain(sk)
+    while chain.n < n:
+        chain.step()
+    _, mk = chain.step()
+    size = mail_header_len(body)
+    header = body[:size]
+    try:
+        return unpad(ChaCha20Poly1305(mk).decrypt(ZERO_NONCE, body[size:], _mail_aad(recipient, header)))
+    except InvalidTag as exc:
+        raise CryptoError("decryption failed") from exc
+
+
+def x_private_bytes(key: X25519PrivateKey) -> bytes:
+    return key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+
+
+def x_from_private(raw: bytes) -> X25519PrivateKey:
+    return X25519PrivateKey.from_private_bytes(raw)
