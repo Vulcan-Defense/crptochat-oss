@@ -1221,14 +1221,22 @@ Os clientes conectam com `crptochat SEU_HOST --pin FINGERPRINT`.
 
 ### Deploy automático pelo GitHub
 
-Depois que o `release-client` publica a release do cliente com sucesso, o job
-`deploy-server` publica o servidor **da mesma versão** numa VM. Também dá para
-rodar à mão em *Actions → deploy-server → Run workflow*, informando a tag. Antes
-de qualquer coisa ele espera a aprovação do environment `production`.
+O workflow `deploy-server` publica o servidor numa VM **na mesma versão** do
+cliente que acabou de sair. Ele dispara sozinho (`workflow_run`) quando o
+`release-client` termina com sucesso na `main` deste repositório, e também dá
+para rodar à mão em *Actions → deploy-server → Run workflow*, informando a tag.
+Antes de qualquer coisa ele espera a aprovação do environment `production`.
 
 O que ele faz, e o que **não** faz:
 
-- Confere que a tag tem o formato `vX.Y.Z` (`^v[0-9]+\.[0-9]+\.[0-9]+$`).
+- Descobre a tag: no disparo automático, lê `__version__` de
+  `crptochat/__init__.py` no commit que o `release-client` construiu
+  (`head_sha` do run) e monta `vX.Y.Z`; no manual, usa a tag informada.
+- Confere que a tag tem o formato `vX.Y.Z` (`^v[0-9]+\.[0-9]+\.[0-9]+$`) e que
+  a release `vX.Y.Z` existe e está publicada (nem rascunho nem pré-release) em
+  `hacking-table/crptochat-client`, onde o `release-client` publica (a variável
+  `CLIENT_RELEASE_REPO` troca o repositório, como no `release-client`). Sem a
+  release, nada é enviado à VM.
 - Grava o `known_hosts` do secret em `~/.ssh/known_hosts` e abre **uma**
   conexão SSH (`StrictHostKeyChecking=yes`, sem `ssh_config`, sem agente,
   prazo de 15 minutos) mandando **só a tag**, por exemplo `v1.19.0`. Não manda

@@ -151,8 +151,6 @@ jobs:
     # only main and v* tags can use and which waits for the maintainer's approval
     environment: release
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.publish.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -202,7 +200,6 @@ jobs:
           fi
 
       - name: Publicar release no repositório do cliente
-        id: publish
         env:
           GH_TOKEN: ${{ secrets.CLIENT_RELEASE_TOKEN }}
           REPO: ${{ env.CLIENT_REPO }}
@@ -267,18 +264,3 @@ jobs:
           # /releases/latest and the installer always get the current build.
           gh release edit "$TAG" --repo "$REPO" --title "crptochat ${TAG}" --notes "$NOTES" \
             --draft=false --prerelease=false --latest
-          # the release is out: the server deploy (next job) takes this tag
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-  # After the release is published, deploy the server of the same version to
-  # the VM (waits for approval on the "production" environment).
-  deploy-server:
-    name: deploy-server
-    needs: publish
-    if: ${{ needs.publish.result == 'success' && needs.publish.outputs.tag != '' }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/deploy-server.yml
-    with:
-      tag: ${{ needs.publish.outputs.tag }}
-    secrets: inherit
