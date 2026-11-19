@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS mailbox (
     body     BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox (to_lower, id);
+CREATE TABLE IF NOT EXISTS announcements (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    text    TEXT NOT NULL,
+    level   TEXT NOT NULL DEFAULT 'info',
+    author  TEXT NOT NULL DEFAULT '',
+    created INTEGER NOT NULL,
+    expires INTEGER
+);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value BLOB
@@ -133,7 +141,10 @@ MIGRATIONS = [
 
 # Optional features this server speaks, announced in the welcome frame so
 # that newer clients can adapt to older servers and the other way round.
-CAPS = {"ratelimit", "ttl", "relayfile", "history", "mailbox"}
+CAPS = {"ratelimit", "ttl", "relayfile", "history", "mailbox", "announce"}
+MAX_ANNOUNCEMENTS = 10          # pinned notices shown in #lobby at the same time
+ANNOUNCE_TEXT = 500
+ANNOUNCE_LEVELS = ("info", "important")
 MAX_ONETIME_KEYS = 100          # one-time prekeys kept per user
 MAIL_FETCH = 100                # envelopes handed over per mail_fetch
 HISTORY_BODY = 12 * 1024        # base64 chars of one history copy (text only)
@@ -393,7 +404,7 @@ class Server:
                        "nonce": b64e(sess.nonce), "your_ip": sess.ip,
                        "reg_token": bool(self.reg_token), "guests": self.allow_guests,
                        "client_repo": self.client_repo, "caps": sorted(CAPS),
-                       "limits": self.public_limits()})
+                       "limits": self.public_limits(), "announcements": self.announcements()})
             while not sess.closed:
                 timeout = IDLE_TIMEOUT if sess.nick else AUTH_TIMEOUT
                 line = await asyncio.wait_for(reader.readline(), timeout)
@@ -1266,6 +1277,7 @@ class Server:
             try:
                 self.purge_history()
                 self.purge_mail()
+                self.purge_announcements()
             except sqlite3.Error:
                 pass
 
@@ -1828,6 +1840,82 @@ class Server:
     def _admin_guests(self, req: dict) -> dict:
         self.allow_guests = bool(req["on"])
         return {"guests_allowed": self.allow_guests}
+
+    # ------------------------------------------------- pinned announcements
+    #
+    # Notices from the server's administration, pinned at the top of #lobby in
+    # every client until they expire or are removed. They are the server
+    # speaking (like the MOTD), not end-to-end messages, and clients say so.
+
+    def announcements(self) -> list[dict]:
+        now = int(time.time())
+        rows = self.db.execute("SELECT id, text, level, author, created, expires FROM announcements "
+                               "WHERE expires IS NULL OR expires > ? ORDER BY id", (now,)).fetchall()
+        return [{"id": r[0], "text": r[1], "level": r[2], "by": r[3], "ts": r[4], "expires": r[5]} for r in rows]
+
+    def _announce_changed(self) -> None:
+        items = self.announcements()
+        for sess in list(self.sessions.values()):
+            sess.send({"t": "announcements", "items": items})
+
+    def add_announcement(self, text, level="info", days=0, author="") -> dict:
+        if not isinstance(text, str):
+            raise Refuse("bad_request", "texto inválido")
+        text = " ".join("".join(ch if ch.isprintable() else " " for ch in text).split())  # one line, printable only
+        if not text or len(text) > ANNOUNCE_TEXT:
+            raise Refuse("bad_request", f"o recado precisa ter de 1 a {ANNOUNCE_TEXT} caracteres")
+        if level not in ANNOUNCE_LEVELS:
+            raise Refuse("bad_request", "nível inválido (info ou important)")
+        if not isinstance(days, (int, float)) or isinstance(days, bool) or not 0 <= days <= 365:
+            raise Refuse("bad_request", "validade inválida (0 a 365 dias; 0 = até ser removido)")
+        if len(self.announcements()) >= MAX_ANNOUNCEMENTS:
+            raise Refuse("limit", f"já há {MAX_ANNOUNCEMENTS} recados fixados; remova um antes")
+        now = int(time.time())
+        expires = now + int(days * 86400) if days else None
+        cur = self.db.execute("INSERT INTO announcements (text, level, author, created, expires) VALUES (?,?,?,?,?)",
+                              (text, level, str(author)[:40], now, expires))
+        self.db.commit()
+        self._announce_changed()
+        return {"announcement": cur.lastrowid}    # not "id": that key carries the request id
+
+    def remove_announcement(self, ident) -> dict:
+        if not isinstance(ident, int) or isinstance(ident, bool):
+            raise Refuse("bad_request", "id inválido")
+        cur = self.db.execute("DELETE FROM announcements WHERE id=?", (ident,))
+        self.db.commit()
+        if not cur.rowcount:
+            raise Refuse("not_found", f"não há recado {ident}")
+        self._announce_changed()
+        return {"removed": ident}
+
+    def purge_announcements(self) -> int:
+        cur = self.db.execute("DELETE FROM announcements WHERE expires IS NOT NULL AND expires <= ?",
+                              (int(time.time()),))
+        self.db.commit()
+        if cur.rowcount:
+            self._announce_changed()
+        return cur.rowcount
+
+    def _op_announce(self, sess: Session, msg: dict) -> dict:
+        self._staff(sess, admin=True)
+        return self.add_announcement(msg.get("text"), msg.get("level") or "info", msg.get("days") or 0, sess.nick)
+
+    def _op_announce_del(self, sess: Session, msg: dict) -> dict:
+        self._staff(sess, admin=True)
+        return self.remove_announcement(msg.get("announcement"))
+
+    def _op_announcements(self, sess: Session, msg: dict) -> dict:
+        return {"items": self.announcements()}
+
+    def _admin_announce(self, req: dict) -> dict:
+        return self.add_announcement(req.get("text"), req.get("level") or "info", req.get("days") or 0,
+                                     "administração")
+
+    def _admin_announce_del(self, req: dict) -> dict:
+        return self.remove_announcement(req.get("announcement"))
+
+    def _admin_announcements(self, req: dict) -> dict:
+        return {"items": self.announcements()}
 
     def _admin_notice(self, req: dict) -> dict:
         text = str(req["text"])[:500]

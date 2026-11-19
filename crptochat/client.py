@@ -208,6 +208,8 @@ class ChatClient:
         self.server_repo: str | None = None
         self.server_caps: set[str] = set()     # features announced by the server (empty: older server)
         self.server_limits: dict = {}
+        self.announcements: list[dict] = []    # pinned in #lobby by the server's administration
+        self._announcements_seen = False
         self.away_text = ""
         self._away_told: set[str] = set()
         self.server_name = ""
@@ -376,6 +378,7 @@ class ChatClient:
         self.server_caps = {c for c in caps if isinstance(c, str)} if isinstance(caps, list) else set()
         limits = welcome.get("limits")
         self.server_limits = limits if isinstance(limits, dict) else {}
+        self._set_announcements(welcome.get("announcements"), on_connect=True)
         repo = welcome.get("client_repo")
         self.server_repo = repo if isinstance(repo, str) and len(repo) < 120 else None
         self.emit("welcome", server=self.server_name, motd=motd)
@@ -466,6 +469,7 @@ class ChatClient:
             "file_go": lambda m: self.relay.on_go(m), "file_chunk": lambda m: self.relay.on_chunk(m),
             "file_ack": lambda m: self.relay.on_ack(m), "file_cancel": lambda m: self.relay.on_cancel(m),
             "away": self._on_away, "notice": self._on_notice, "ratelimit": self._on_ratelimit, "client_repo": self._on_client_repo, "invited": self._on_invited, "role": self._on_role,
+            "announcements": lambda m: self._set_announcements(m.get("items")),
         }
         while True:
             line = await reader.readline()
@@ -1226,6 +1230,38 @@ class ChatClient:
 
     def _on_notice(self, msg: dict) -> None:
         self.emit("notice", text=str(msg.get("text"))[:500])
+
+    def _set_announcements(self, items, on_connect: bool = False) -> None:
+        """Validate what the server pins (it is untrusted: bounded, plain text)."""
+        if not isinstance(items, list):
+            return
+        clean = []
+        for item in items[:20]:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), int) or isinstance(item.get("id"), bool):
+                continue
+            text = " ".join("".join(ch if ch.isprintable() else " " for ch in str(item.get("text") or "")).split())[:500]
+            if not text:
+                continue
+            ts = item.get("ts") if isinstance(item.get("ts"), int) else 0
+            expires = item.get("expires") if isinstance(item.get("expires"), int) else None
+            clean.append({"id": item["id"], "text": text,
+                          "level": "important" if item.get("level") == "important" else "info",
+                          "by": str(item.get("by") or "")[:40], "ts": ts, "expires": expires})
+        before = {a["id"] for a in self.announcements}
+        first = on_connect and not self._announcements_seen
+        self._announcements_seen = self._announcements_seen or on_connect
+        self.announcements = clean
+        # what was already pinned when we first connect is shown, not shouted
+        new = [] if first else [a for a in clean if a["id"] not in before]
+        self.emit("announcements", items=clean, new=new, on_connect=first)
+
+    async def announce(self, text: str, level: str = "info", days: int = 0) -> int:
+        if self.server_caps and "announce" not in self.server_caps:
+            raise ChatError("este servidor ainda não tem recados fixados")
+        return (await self.request({"t": "announce", "text": text, "level": level, "days": days}))["announcement"]
+
+    async def announce_del(self, ident: int) -> None:
+        await self.request({"t": "announce_del", "announcement": ident})
 
     def _on_invited(self, msg: dict) -> None:
         self.emit("invited", chan=str(msg["chan"]), by=str(msg.get("by") or ""))

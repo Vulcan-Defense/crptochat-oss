@@ -371,10 +371,42 @@ class Console:
             raise AdminError("uso: notice TEXTO")
         self.out(f"  {G}ok{R} aviso enviado a {self.link.call('notice', text=text)['sent']} sessões")
 
+    def cmd_announce(self, args):
+        """announce [importante] [--dias N] TEXTO | del ID   recados fixados no #lobby"""
+        if not args:
+            items = self.link.call("announcements")["items"]
+            if not items:
+                self.out(f"  {D}nenhum recado fixado no #lobby{R}")
+            for item in items:
+                until = time.strftime("%d/%m %H:%M", time.localtime(item["expires"])) if item["expires"] else "até remover"
+                mark = f"{M}IMPORTANTE{R} " if item["level"] == "important" else ""
+                self.out(f"  {Y}{item['id']:>3}{R} {mark}{item['text']}  {D}({item['by']}, {until}){R}")
+            return
+        if args[0] in ("del", "rm", "remover"):
+            ident = self._need(args[1:], "id")
+            if not ident.isdigit():
+                raise AdminError("uso: announce del ID")
+            self.link.call("announce_del", announcement=int(ident))
+            self.out(f"  {G}ok{R} recado {ident} removido de todos os clientes")
+            return
+        level, days, words = "info", 0, list(args)
+        if words and words[0].lower() in ("importante", "important", "!"):
+            level, words = "important", words[1:]
+        if len(words) >= 2 and words[0] in ("--dias", "--days"):
+            if not words[1].isdigit():
+                raise AdminError("uso: announce [importante] [--dias N] TEXTO")
+            days, words = int(words[1]), words[2:]
+        text = " ".join(words)
+        if not text:
+            raise AdminError("uso: announce [importante] [--dias N] TEXTO")
+        ident = self.link.call("announce", text=text, level=level, days=days)["announcement"]
+        self.out(f"  {G}ok{R} recado {ident} fixado no #lobby de todos os clientes"
+                 + (f" por {days} dias" if days else " até ser removido (announce del " + str(ident) + ")"))
+
     def cmd_help(self, args):
         self.out(f"  {B}comandos{R} {D}(ou digite o número de uma opção do menu){R}")
         for name in ("health", "users", "user", "role", "ban", "unban", "kick", "bans", "channels", "chan",
-                     "chanrole", "policy", "chanunban", "guests", "ratelimit", "updaterepo", "notice"):
+                     "chanrole", "policy", "chanunban", "guests", "ratelimit", "updaterepo", "notice", "announce"):
             self.out(f"  {C}{getattr(self, 'cmd_' + name).__doc__}{R}")
 
     @staticmethod
@@ -472,6 +504,10 @@ class Console:
                 self.pick((lambda cs: (self.out(f"  {D}" + "  ".join(f"{i}:{c['name']}" for i, c in enumerate(cs, 1)) + R), cs)[1])(
                     self.cmd_channels([])), "abrir canal"))),
             ("aviso a todos", lambda: self.cmd_notice([self.ask("texto do aviso")])),
+            ("recados fixados no #lobby", lambda: (
+                self.cmd_announce([]),
+                (lambda t: t and self.cmd_announce(t.split()))(
+                    self.ask("novo recado ('importante TEXTO', 'del ID'; Enter volta)")))),
             ("limites anti-flood", lambda: (
                 self.cmd_ratelimit([]),
                 (lambda n: n and self.cmd_ratelimit(["set", n, self.ask(f"novo valor de {n}")]))(
