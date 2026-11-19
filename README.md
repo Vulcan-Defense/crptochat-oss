@@ -695,13 +695,22 @@ quem garante que você fala com a pessoa certa é você:
 
 ### Atualizações
 
-O binário avisa quando há versão nova ao conectar e instala com `/update` (ou
-`Esc` → *Atualizar o crptochat*, ou `crptochat --update` fora do chat). Desde a
-1.10.0 ele busca no **site público** `https://crptochat.acpt.app.br/downloads/`,
-sem login nem token: confere a assinatura do manifesto, a versão e o SHA-256,
-testa o binário novo e só então substitui o atual; basta abrir o chat de novo.
-`/update check` só verifica e `/update off` desliga o aviso. Instalações pelo
-código-fonte só recebem o aviso (atualize com `git pull` e `pip`).
+O binário procura versão nova sozinho ao conectar e, depois, a cada 6 horas
+enquanto está aberto. Quando acha uma, a barra do topo mostra
+`↑ X.Y.Z DISPONÍVEL` e o chat **pergunta** (desde a 1.17.0):
+
+- **Atualizar agora**: baixa, confere e troca o binário, como o `/update`;
+- **Depois**: volta a perguntar na próxima verificação;
+- **Pular esta versão**: não pergunta mais por ela, só por uma mais nova (o
+  `/update` ainda a instala, se você mudar de ideia).
+
+Também dá para instalar com `/update` (ou `Esc` → *Atualizar o crptochat*, ou
+`crptochat --update` fora do chat). Desde a 1.10.0 ele busca no **site
+público** `https://crptochat.acpt.app.br/downloads/`, sem login nem token:
+confere a assinatura do manifesto, a versão e o SHA-256, testa o binário novo e
+só então substitui o atual; basta abrir o chat de novo. `/update check` só
+verifica e `/update off` desliga as verificações automáticas e a pergunta.
+Instalações pelo código-fonte só recebem o aviso (atualize com `git pull` e `pip`).
 
 > **Quem tem a 1.9.0 ou anterior:** essas versões ainda procuram no GitHub
 > (repositório privado) e não acham a atualização. Instale a 1.10.0 **uma vez**
