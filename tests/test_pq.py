@@ -5,7 +5,7 @@ import json
 import os
 
 import pytest
-from test_e2e import Harness, messages, run, until
+from test_e2e import Harness, envelope_kind, messages, run, until
 from test_mailbox import back, leave, mail_rows, published
 
 from crptochat import crypto
@@ -87,7 +87,7 @@ def direct_kinds(h, to):
     for frame in h.wire:
         msg = json.loads(frame)
         if msg.get("t") == "direct" and msg.get("to", "").lower() == to:
-            out.append(b64d(msg["body"])[0])
+            out.append(envelope_kind(b64d(msg["body"])))
     return out
 
 
@@ -103,7 +103,7 @@ def test_clients_mix_ml_kem_into_their_ratchet(home):
                 await alice.send_dm("bob", f"de novo {i}")
                 await until(lambda: len(messages(bob, "@alice")) == i + 2)
             assert alice.peers["bob"]._cur["dr"].pq and bob.peers["alice"]._cur["dr"].pq
-            assert crypto.DM_V3_PQ in direct_kinds(h, "bob") + direct_kinds(h, "alice")
+            assert "v3pq" in direct_kinds(h, "bob") + direct_kinds(h, "alice")
             # once both sides have mixed, neither the 1.2 KB key nor the 1.1 KB ciphertext goes along
             await bob.send_dm("alice", "mais uma vez")
             await until(lambda: len(messages(alice, "@bob")) == 3)
@@ -126,7 +126,9 @@ def test_a_contact_without_the_layer_still_talks(home):
                 await until(lambda: len(messages(alice, "@antigo")) == i + 1)
                 await alice.send_dm("antigo", f"a{i}")
                 await until(lambda: len(messages(older, "@alice")) == i + 2)
-            assert set(direct_kinds(h, "antigo")[1:] + direct_kinds(h, "alice")) == {crypto.DM_V3}
+            # only the first envelope, before the capabilities are known, is v1
+            assert direct_kinds(h, "antigo")[0] == "v1"
+            assert set(direct_kinds(h, "antigo")[1:] + direct_kinds(h, "alice")) == {"v3"}
             assert not alice.peers["antigo"]._cur["dr"].pq
     run(main())
 

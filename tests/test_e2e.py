@@ -67,6 +67,24 @@ async def until(cond, timeout=5):
         await asyncio.sleep(0.01)
 
 
+def envelope_kind(body: bytes) -> str:
+    """Format of a direct envelope as the relay sees it: "v1", "v2", "v3" or "v3pq".
+
+    The first byte alone is not enough: a v1 envelope starts with a random
+    12-byte nonce, so 1 in 256 of them start with 0x02, 0x03 or 0x05. The
+    sizes tell them apart, because the content is padded to multiples of 64
+    bytes: v1 adds 12 (nonce) + 16 (tag), v2 adds 1 + 4 + 16 and v3 adds
+    1 + 40 + 16 (+ 1088 for the ML-KEM ciphertext, itself a multiple of 64)."""
+    rest = len(body) % 64
+    if rest == 28:
+        return "v1"
+    if rest == 21 and body[:1] == b"\x02":
+        return "v2"
+    if rest == 57 and body[:1] in (b"\x03", b"\x05"):
+        return "v3pq" if body[:1] == b"\x05" else "v3"
+    raise AssertionError(f"envelope de formato desconhecido ({len(body)} bytes, começa com {body[:1]!r})")
+
+
 def messages(client, buffer=None):
     return [(d["nick"], d["text"]) for k, d in client.events
             if k == "message" and not d["mine"] and (buffer is None or d["buffer"] == buffer)]

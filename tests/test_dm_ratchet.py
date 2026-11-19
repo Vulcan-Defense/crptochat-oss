@@ -6,7 +6,7 @@ import asyncio
 import json
 
 import pytest
-from test_e2e import Harness, messages, run, until
+from test_e2e import Harness, envelope_kind, messages, run, until
 
 from crptochat import crypto
 from crptochat.client import ChatClient
@@ -68,7 +68,7 @@ def test_new_clients_switch_to_the_ratchet_after_one_message(home):
                                                           b"crptochat-direct-v1|alice|bob")))
             assert inner["x"] == "primeira" and "dmr" in inner["cv"]
             v2 = sent[1:]
-            assert all(b[0] == crypto.DM_V2 for b in v2)
+            assert all(envelope_kind(b) == "v2" for b in v2)
             assert [int.from_bytes(b[1:5], "big") for b in v2] == [0, 1, 2]       # one key per message
             assert len({b[5:] for b in v2}) == 3                                  # same text, different ciphertext
             assert messages(bob, "@alice") == [("alice", "primeira")] + [("alice", "igual")] * 3
@@ -107,7 +107,7 @@ def test_the_chain_state_alone_cannot_open_past_messages(home):
             await alice.send_dm("bob", "segredo 1")
             await alice.send_dm("bob", "segredo 2")
             await until(lambda: len(messages(bob, "@alice")) == 3)
-            old = [b for b in bodies(h, "alice", "bob") if b[0] == crypto.DM_V2]
+            old = [b for b in bodies(h, "alice", "bob") if envelope_kind(b) == "v2"]
             _, _, recv = bob._chains(bob.peers["alice"])
             # an attacker who steals bob's ratchet state now gets nothing already read
             for body in old:
@@ -124,7 +124,7 @@ def test_reconnecting_starts_a_new_ratchet_and_old_traffic_stays_closed(home):
             await bob.send_dm("alice", "dois")
             await alice.send_dm("bob", "três")
             await until(lambda: len(messages(bob, "@alice")) == 2)
-            before = [b for b in bodies(h, "alice", "bob") if b[0] == crypto.DM_V2]
+            before = [b for b in bodies(h, "alice", "bob") if envelope_kind(b) == "v2"]
             old_session = alice._dh
 
             h.server.sessions["alice"].close()                         # alice drops and comes back
@@ -182,7 +182,7 @@ async def establish(alice, bob):
 
 
 def v2_indexes(h, to):
-    return [int.from_bytes(b[1:5], "big") for b in bodies(h, None, to) if b[:1] == b"\x02"]
+    return [int.from_bytes(b[1:5], "big") for b in bodies(h, None, to) if envelope_kind(b) == "v2"]
 
 
 def test_swapping_and_restoring_a_session_key_never_restarts_the_chain(home):
