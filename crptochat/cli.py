@@ -150,7 +150,14 @@ def main(argv=None) -> None:
                     version=__version__ + (f" ({__build__})" if __build__ else ""))
     ap.add_argument("--build-info", action="store_true",
                     help="imprime versão, commit e data do build (usado pelo install.sh contra downgrade) e sai")
+    ap.add_argument("--tls-info", action="store_true",
+                    help="mostra quantas autoridades certificadoras o cliente usa para o site de atualizações e sai")
     args = ap.parse_args(argv)
+    if args.tls_info:
+        from . import update
+        info = update.tls_info()
+        print(f"crptochat-tls ca={info['ca']} bundle={'sim' if info['bundle'] else 'nao'}")
+        return
     if args.build_info:
         from . import update
         info = update.current()

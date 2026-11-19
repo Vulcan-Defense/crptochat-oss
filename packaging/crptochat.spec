@@ -13,15 +13,18 @@ from PyInstaller.utils.hooks import (
 spec_dir = os.path.dirname(os.path.abspath(SPEC))
 repo_root = os.path.dirname(spec_dir)
 
-# Data/CSS from Textual, native libs from cryptography. Do not ship
-# third-party .py files as datas (the app itself is included as bytecode).
-datas = collect_data_files("textual")
+# Data/CSS from Textual, native libs from cryptography, the CA bundle from
+# certifi (the frozen OpenSSL finds no system CA on macOS: without it the
+# updater cannot check the site's certificate). Do not ship third-party .py
+# files as datas (the app itself is included as bytecode).
+datas = collect_data_files("textual") + collect_data_files("certifi")
 binaries = collect_dynamic_libs("cryptography")
 hiddenimports = (
     collect_submodules("textual")
     + collect_submodules("rich")
     + collect_submodules("cryptography")
     + [
+        "certifi",
         "crptochat",
         "crptochat.cli",
         "crptochat.client",
