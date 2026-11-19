@@ -1,71 +1,113 @@
-# Deploys the server to the production VM when a release vX.Y.Z is published
-# in this repository (or by hand, with workflow_dispatch and the tag).
+# Deploys the server to the production VM.
 #
-# The job waits for the approval configured on the "production" environment
-# (Settings -> Environments -> production -> Required reviewers), then opens one
-# SSH connection whose only payload is the tag, e.g. "v1.19.0". On the VM, the
-# deploy key is restricted to a forced command, which reads the tag from
-# SSH_ORIGINAL_COMMAND and does the actual deploy; this workflow never sends a
-# shell command. See README, "Deploy automático pelo GitHub".
+# Runs when the release-client workflow finishes successfully on main (it has
+# just published the client release in hacking-table/crptochat-client), or by
+# hand with workflow_dispatch and the tag. The tag is the version in
+# crptochat/__init__.py at the commit that release-client built, and the
+# release vX.Y.Z must exist (published, not a draft or a pre-release) in the
+# client repository before anything is sent.
 #
-# Secrets (environment "production"):
+# The job waits for the approval configured on the "production" environment,
+# then opens one SSH connection whose only payload is the tag, e.g. "v1.19.0".
+# On the VM the deploy key is restricted to a forced command, which checks the
+# release, makes a backup, deploys, runs the health check and rolls back on
+# failure; this workflow never sends a shell command. Any exit status other
+# than 0 fails the job. See README, "Deploy automático pelo GitHub".
+#
+# Secrets of the "production" environment:
 #   DEPLOY_SSH_KEY       private key allowed only to run the forced command
 #   DEPLOY_HOST          VM address (host name or IP)
 #   DEPLOY_USER          SSH user
 #   DEPLOY_KNOWN_HOSTS   the VM's host key line(s), as in known_hosts
-# Variable (optional): DEPLOY_PORT, the SSH port (default 22).
 #
-# No third-party action is used: only bash and the runner's OpenSSH client.
+# No third-party action is used: only bash, curl, jq and the runner's OpenSSH.
 name: deploy-server
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: [release-client]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag a publicar (vX.Y.Z)"
+        description: "Tag da release do cliente a publicar no servidor (vX.Y.Z)"
         required: true
         type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: deploy-server-production
-  cancel-in-progress: false            # one deploy at a time; never kill one halfway
+env:
+  CLIENT_REPO: ${{ vars.CLIENT_RELEASE_REPO || 'hacking-table/crptochat-client' }}
 
 jobs:
   deploy:
-    name: deploy ${{ github.event.release.tag_name || inputs.tag }}
-    # pre-releases and drafts are not deployed
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    name: deploy-server
+    # only a successful release-client run on main of this repository (never a fork's)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production
-    env:
-      # passed through the environment, never interpolated into the script
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    concurrency:
+      group: deploy-server-production
+      cancel-in-progress: false          # one deploy at a time; never kill one halfway
     steps:
-      - name: Validar a tag
+      - name: Descobrir a tag
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$ ]]; then
+          if [ "$EVENT" = workflow_dispatch ]; then
+            tag="$INPUT_TAG"
+          else
+            # the version of the commit that release-client built and published
+            if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::head_sha inválido no evento workflow_run"
+              exit 1
+            fi
+            init="$(curl -fsS --max-time 30 --proto '=https' \
+              -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github.raw+json" \
+              "https://api.github.com/repos/${REPO}/contents/crptochat/__init__.py?ref=${HEAD_SHA}")"
+            version="$(printf '%s\n' "$init" | sed -n 's/^__version__ = "\([0-9][0-9.]*\)"$/\1/p' | head -n 1)"
+            tag="v${version}"
+            echo "versão em crptochat/__init__.py no commit ${HEAD_SHA:0:7}: ${version:-?}"
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Validar a tag e a release do cliente
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::tag inválida: esperado vX.Y.Z (ex.: v1.19.0)"
             exit 1
           fi
-          # the tag must exist in this repository (a dispatch cannot name something else)
-          status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --proto '=https' \
+          # the release must exist in the client repository (public API), published
+          body="$(mktemp)"
+          status="$(curl -sS -o "$body" -w '%{http_code}' --max-time 30 --proto '=https' \
             -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPO}/git/ref/tags/${TAG}")"
+            "https://api.github.com/repos/${CLIENT_REPO}/releases/tags/${TAG}")"
           if [ "$status" != "200" ]; then
-            echo "::error::a tag ${TAG} não existe em ${REPO} (HTTP ${status})"
+            echo "::error::a release ${TAG} não existe em ${CLIENT_REPO} (HTTP ${status})"
             exit 1
           fi
-          echo "tag ${TAG} conferida"
+          if [ "$(jq -r '.tag_name' "$body")" != "$TAG" ] || [ "$(jq -r '.draft' "$body")" != false ] \
+              || [ "$(jq -r '.prerelease' "$body")" != false ]; then
+            echo "::error::a release ${TAG} de ${CLIENT_REPO} não está publicada (rascunho ou pré-release)"
+            exit 1
+          fi
+          echo "release ${TAG} conferida em ${CLIENT_REPO}"
 
       - name: Preparar a chave e o known_hosts
         env:
@@ -73,7 +115,6 @@ jobs:
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
         run: |
           set -euo pipefail
           for name in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_HOST DEPLOY_USER; do
@@ -82,35 +123,31 @@ jobs:
               exit 1
             fi
           done
-          if ! [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || ! [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]] \
-              || ! [[ "$DEPLOY_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$DEPLOY_PORT" -gt 65535 ]; then
-            echo "::error::DEPLOY_USER, DEPLOY_HOST ou DEPLOY_PORT com formato inválido"
+          if ! [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || ! [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
+            echo "::error::DEPLOY_USER ou DEPLOY_HOST com formato inválido"
             exit 1
           fi
           umask 077
-          dir="${RUNNER_TEMP}/deploy-ssh"
-          mkdir -p "$dir"
-          printf '%s\n' "$DEPLOY_SSH_KEY" > "$dir/key"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$dir/known_hosts"
-          ssh-keygen -y -f "$dir/key" > /dev/null || { echo "::error::DEPLOY_SSH_KEY não é uma chave privada válida"; exit 1; }
-          entry="$DEPLOY_HOST"
-          [ "$DEPLOY_PORT" = 22 ] || entry="[$DEPLOY_HOST]:$DEPLOY_PORT"
-          ssh-keygen -F "$entry" -f "$dir/known_hosts" > /dev/null \
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          ssh-keygen -y -f "$HOME/.ssh/deploy_key" > /dev/null \
+            || { echo "::error::DEPLOY_SSH_KEY não é uma chave privada válida"; exit 1; }
+          ssh-keygen -F "$DEPLOY_HOST" -f "$HOME/.ssh/known_hosts" > /dev/null \
             || { echo "::error::DEPLOY_KNOWN_HOSTS não tem a chave do host DEPLOY_HOST"; exit 1; }
 
       - name: Deploy por SSH (só a tag é enviada)
         env:
+          TAG: ${{ steps.tag.outputs.tag }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
         run: |
           set -euo pipefail
-          dir="${RUNNER_TEMP}/deploy-ssh"
-          # -F /dev/null: no system or user ssh_config; -T: no terminal;
-          # BatchMode: never prompt; StrictHostKeyChecking=yes with a fixed known_hosts
-          timeout --kill-after=30 900 ssh -F /dev/null -T -p "$DEPLOY_PORT" \
-            -i "$dir/key" -o IdentitiesOnly=yes -o IdentityAgent=none \
-            -o UserKnownHostsFile="$dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+          # fixed known_hosts with StrictHostKeyChecking=yes; no ssh_config, no agent,
+          # never prompts. The exit status of the forced command is the job's result.
+          timeout --kill-after=30 900 ssh -F /dev/null -T \
+            -i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o GlobalKnownHostsFile=/dev/null \
             -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o CheckHostIP=no \
             -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
             -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
@@ -121,4 +158,4 @@ jobs:
 
       - name: Apagar a chave do runner
         if: always()
-        run: rm -rf "${RUNNER_TEMP}/deploy-ssh"
+        run: rm -f "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
