@@ -182,6 +182,8 @@ HELP = [
     ("/clear", "limpa a tela atual"),
     ("/quit", "sai"),
 ]
+UPDATE_EVERY = 6 * 3600     # seconds between automatic update checks while the client runs
+
 GENERATE = ("gerar", "gera", "random", "aleatoria", "aleatória")
 REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "😂", "<3": "❤️", "coracao": "❤️",
              "coração": "❤️", "fogo": "🔥", "triste": "😢", "uau": "😮", "olhos": "👀", "check": "✅"}
@@ -626,6 +628,8 @@ class ChatApp(App):
         self.fatal: tuple[str, str] | None = None
         self._runner: asyncio.Task | None = None
         self._first_online = True
+        self.update_info: dict | None = None     # newer release found and not installed yet
+        self._update_asked: set[str] = set()     # releases already offered in this run
         self.presence: dict[str, str] = {}
         self.clip_expiry: dict[int, float] = {}
         self._presence_known = False
@@ -673,6 +677,7 @@ class ChatApp(App):
         self._runner = asyncio.create_task(self.client.run())
         self.set_interval(1.0, self.expire_messages)
         self.set_interval(30, lambda: self.run_cmd(self.poll_presence(), quiet=True))
+        self.set_interval(UPDATE_EVERY, self.periodic_update_check)
 
     def on_resize(self) -> None:
         self.render_topbar()
@@ -773,6 +778,8 @@ class ChatApp(App):
             badges.append("★ ADMIN  " if self.client.role == "admin" else "☆ MOD  ", style=f"bold {ORANGE}")
         if self.client.away:
             badges.append("AUSENTE  ", style=f"bold {YELLOW}")
+        if self.update_info:
+            badges.append(f"↑ {self.update_info['version']} DISPONÍVEL (/update)  ", style=f"bold {GREEN}")
         right = Text.assemble(badges, ("● ", dot), (label, f"bold {dot}"), ("  ", ""),
                               ("TLS " if self.client.tls else "SEM TLS ", GREEN if self.client.tls else YELLOW),
                               ("· E2EE ", GREEN))
@@ -2359,12 +2366,61 @@ class ChatApp(App):
                           + (f", {mine['commit']}" if mine["commit"] else "") + ")", "ok")
             return None
         when = time.strftime("%d/%m/%Y %H:%M", time.localtime(info["built"])) if info["built"] else "?"
+        key = self._release_key(info)
+        first = key not in self._update_asked
+        self.update_info = info
+        self.render_topbar()
+        if announce_only and not first:
+            return info                       # already told (and asked) about this one
         self.note(f"atualização disponível: crptochat {info['version']} ({info['commit']}, {when}) em {repo}"
                   + (" · /update para instalar" if update.can_self_update() else
                      " · esta instalação é do código-fonte: atualize com git pull e pip install"), "warn", CONSOLE)
         if announce_only:
             self.bell()
+            self._update_asked.add(key)
+            if update.can_self_update() and load_prefs().get("update_skip") != key and not self.in_dialog:
+                self.run_cmd(self.offer_update(info), quiet=True)
         return info
+
+    @staticmethod
+    def _release_key(info: dict) -> str:
+        return f"{info.get('version')}|{info.get('commit')}|{info.get('built')}"
+
+    async def offer_update(self, info: dict) -> None:
+        """Found on its own: ask instead of just printing a line in the console."""
+        choice = await self.ask(ChoiceScreen(
+            f"crptochat {info['version']} está disponível (você usa {update.current()['version']})", [(None, [
+                ("now", "Atualizar agora", "baixa, confere a assinatura e o SHA-256 e troca o binário"),
+                ("later", "Depois", "pergunta de novo na próxima verificação; o /update instala quando quiser"),
+                ("skip", "Pular esta versão", "só volta a perguntar quando sair uma mais nova"),
+            ])], heading="ATUALIZAÇÃO DISPONÍVEL"))
+        if choice == "now":
+            try:
+                await self.install_update(info)
+            except ChatError as exc:          # offered in the background: say it, do not swallow it
+                self.note(str(exc), "err", CONSOLE)
+        elif choice == "skip":
+            prefs = load_prefs()
+            prefs["update_skip"] = self._release_key(info)
+            save_prefs(prefs)
+            self.note(f"versão {info['version']} pulada; /update instala mesmo assim, se mudar de ideia", "info")
+        else:
+            self._update_asked.discard(self._release_key(info))   # ask again next time
+
+    async def install_update(self, info: dict) -> None:
+        self.note("baixando e conferindo a atualização…", "info")
+        try:
+            done = await asyncio.to_thread(update.apply, self.update_repo())
+        except update.UpdateError as exc:
+            raise ChatError(f"atualização não instalada: {exc}") from None
+        self.update_info = None
+        self.render_topbar()
+        self.note(f"crptochat {done['version']} ({done['commit']}) instalado em {done['path']}. "
+                  "Saia (Ctrl+Q) e abra de novo para usar a versão nova.", "ok")
+
+    def periodic_update_check(self) -> None:
+        if self.state == "online" and load_prefs().get("update_check", True):
+            self.run_cmd(self.check_update(announce_only=True), quiet=True)
 
     async def cmd_update(self, rest: str):
         parts = rest.split()
@@ -2404,13 +2460,7 @@ class ChatApp(App):
                 ("no", "Agora não", "")])], heading="ATUALIZAÇÃO"))
         if answer != "yes":
             return
-        self.note("baixando e conferindo a atualização…", "info")
-        try:
-            done = await asyncio.to_thread(update.apply, self.update_repo())
-        except update.UpdateError as exc:
-            raise ChatError(f"atualização não instalada: {exc}") from None
-        self.note(f"crptochat {done['version']} ({done['commit']}) instalado em {done['path']}. "
-                  "Saia (Ctrl+Q) e abra de novo para usar a versão nova.", "ok")
+        await self.install_update(info)
 
     async def menu_update(self) -> None:
         await self.cmd_update("")
