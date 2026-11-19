@@ -103,7 +103,9 @@ def run_update(prefs: dict) -> None:
             else:
                 say(f"já está na versão mais recente ({mine['version']} {mine['commit']})")
             return
-        say(f"instalando crptochat {info['version']} ({info['commit']}) de {repo}…")
+        if info.get("fallback"):
+            say(f"{Y}{info['fallback']}; usando o site de downloads{R}")
+        say(f"instalando crptochat {info['version']} ({info['commit']}) de {update.describe(info['source'])}…")
         done = update.apply(repo)
     except update.UpdateError as exc:
         sys.exit(f"atualização não instalada: {exc}")

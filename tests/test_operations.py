@@ -343,3 +343,87 @@ def test_installer_downloads_from_the_site_over_https_only(tmp_path):
     proc = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=60)
     assert proc.returncode != 0 and "https://" in proc.stderr
     assert not (tmp_path / "bin" / "crptochat").exists()
+
+
+FAKE_CURL = r'''#!/bin/sh
+# Plays github.com and the download site for install.sh, from local folders.
+echo "$*" >> "$CURL_LOG"
+out=""; url=""; head=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        -fsSI) head=1; shift ;;
+        --proto|--proto-redir|--max-filesize|--max-time) shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+case "$url" in
+    https://github.com/acme/rel/releases/latest)
+        [ "$GITHUB_DOWN" = 1 ] && exit 22
+        printf 'HTTP/2 302\r\nlocation: https://github.com/acme/rel/releases/tag/v9.9.9\r\n\r\n'; exit 0 ;;
+    https://github.com/acme/rel/releases/download/v9.9.9/*)
+        [ "$GITHUB_DOWN" = 1 ] && exit 22
+        name="${url##*/}"; [ -f "$GH_DIR/$name" ] || exit 22; cp "$GH_DIR/$name" "$out" ;;
+    https://site.example/downloads/*)
+        name="${url##*/}"; [ -f "$SITE_DIR/$name" ] || exit 22; cp "$SITE_DIR/$name" "$out" ;;
+    *) exit 6 ;;
+esac
+'''
+
+
+def install_online(tmp, public, gh_dir, site_dir, extra_env=None):
+    """install.sh with a fake curl: GitHub first, the site as fallback."""
+    script = os.path.join(tmp, "install.sh")
+    with open(INSTALLER) as fh:
+        text = fh.read()
+    with open(script, "w") as fh:
+        fh.write(update.stamp_installer(text, public))
+    fake = os.path.join(tmp, "fakebin")
+    os.makedirs(fake, exist_ok=True)
+    with open(os.path.join(fake, "curl"), "w") as fh:
+        fh.write(FAKE_CURL)
+    os.chmod(os.path.join(fake, "curl"), 0o755)
+    log = os.path.join(tmp, "curl.log")
+    env = {"PATH": fake + os.pathsep + os.environ["PATH"], "HOME": str(tmp), "CRPTOCHAT_BIN_DIR": os.path.join(tmp, "bin"),
+           "CRPTOCHAT_REPO": "acme/rel", "CRPTOCHAT_UPDATE_FALLBACK": "https://site.example/downloads/",
+           "CURL_LOG": log, "GH_DIR": str(gh_dir), "SITE_DIR": str(site_dir), **(extra_env or {})}
+    proc = subprocess.run(["sh", script], env=env, capture_output=True, text=True, timeout=60)
+    calls = open(log).read().splitlines() if os.path.exists(log) else []
+    return proc.returncode, proc.stdout + proc.stderr, os.path.exists(os.path.join(tmp, "bin", "crptochat")), calls
+
+
+@needs_sh
+def test_installer_downloads_from_the_github_release(tmp_path):
+    private, public = update.generate_key()
+    make_release(tmp_path / "gh", private)
+    code, out, installed, calls = install_online(tmp_path, public, tmp_path / "gh", tmp_path / "nada")
+    assert code == 0 and installed, out
+    assert "release baixada de https://github.com/acme/rel/releases/download/v9.9.9/" in out
+    downloads = [c for c in calls if " -o " in c]
+    assert len(downloads) == 3 and all("/releases/download/v9.9.9/" in c for c in downloads)  # one tag for all
+    assert not [c for c in calls if "site.example" in c]
+    # https only, redirects included, on every request
+    assert all("--proto =https" in c for c in calls)
+    assert all("--proto-redir =https" in c for c in downloads)
+
+
+@needs_sh
+def test_installer_falls_back_to_the_site(tmp_path):
+    private, public = update.generate_key()
+    make_release(tmp_path / "site", private)
+    code, out, installed, calls = install_online(tmp_path, public, tmp_path / "nada", tmp_path / "site",
+                                                 {"GITHUB_DOWN": "1"})
+    assert code == 0 and installed, out
+    assert "o GitHub não respondeu" in out and "release baixada de https://site.example/downloads/" in out
+
+    # without the fallback it stops; and the site's copy is still checked like any other
+    (tmp_path / "bin" / "crptochat").unlink()
+    code, out, installed, _ = install_online(tmp_path, public, tmp_path / "nada", tmp_path / "site",
+                                             {"GITHUB_DOWN": "1", "CRPTOCHAT_UPDATE_FALLBACK": "off"})
+    assert code != 0 and not installed, out
+    other, _ = update.generate_key()
+    make_release(tmp_path / "forged", other)
+    code, out, installed, _ = install_online(tmp_path, public, tmp_path / "nada", tmp_path / "forged",
+                                             {"GITHUB_DOWN": "1"})
+    assert code != 0 and not installed, out

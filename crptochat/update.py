@@ -3,9 +3,17 @@
 Trust model. Neither the chat server nor the download site is trusted to make
 a client install anything:
 
-* Releases come from the public download site (by default
-  https://crptochat.acpt.app.br/downloads/, fixed at build time; the env
-  CRPTOCHAT_UPDATE_URL overrides it). No token or login is ever sent there.
+* Releases come from the latest GitHub release of the public client
+  repository (by default github:hacking-table/crptochat-client, fixed at build
+  time): the GitHub API says which release is the latest and lists its
+  assets, which are then downloaded from that release only (they redirect to
+  GitHub's object storage, always over https). If GitHub cannot be reached or
+  rate-limits the anonymous API, the public download site
+  (https://crptochat.acpt.app.br/downloads/) is the fallback
+  (CRPTOCHAT_UPDATE_FALLBACK changes it, "off" turns it off). A security
+  failure (signature, checksum, downgrade) never falls back: it stops.
+  CRPTOCHAT_UPDATE_URL overrides the source. No token, login or cookie is
+  ever sent anywhere, even with GH_TOKEN or GITHUB_TOKEN in the environment.
   The chat server only *suggests* another source (set by its operator in
   crptochat-admin), and the client switches only when the user confirms.
 * Every release carries a manifest, RELEASE, listing its version, commit,
@@ -29,16 +37,16 @@ RELEASE format (one item per line):
     <sha256>  crptochat-linux-amd64
     ...
 
-A source is an https:// folder (the site), "github:owner/name" (optional,
-explicit fallback to the latest GitHub release, anonymous; only works for a
-public repository) or file:///path (a local mirror the user sets). Plain
-http:// is refused.
+A source is "github:owner/name" (the latest release of a public repository,
+through the anonymous GitHub API), an https:// folder (the site, or a mirror)
+or file:///path (a local mirror the user sets). Plain http:// is refused.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import platform
 import re
@@ -58,7 +66,12 @@ try:
 except ImportError:  # running from source
     _build = None
 
-DEFAULT_URL = getattr(_build, "UPDATE_URL", "") or "https://crptochat.acpt.app.br/downloads/"
+DEFAULT_REPO = "hacking-table/crptochat-client"
+DEFAULT_SOURCE = getattr(_build, "UPDATE_SOURCE", "") or "github:" + DEFAULT_REPO
+DEFAULT_URL = getattr(_build, "UPDATE_URL", "") or "https://crptochat.acpt.app.br/downloads/"   # the fallback site
+GITHUB_API = "https://api.github.com"          # tests point these at a local server
+GITHUB_WEB = "https://github.com"
+MAX_API = 1024 * 1024
 SIGNING_KEY = getattr(_build, "PUBKEY", "")       # base64 Ed25519 public key, or "" (unsigned builds)
 MANIFEST = "RELEASE"
 MANIFEST_HEADER = "crptochat-release 1"
@@ -81,6 +94,11 @@ class UpdateError(Exception):
     pass
 
 
+class SourceUnavailable(UpdateError):
+    """The source could not be read (network, rate limit, missing file): the
+    fallback may be tried. Never raised for a security failure."""
+
+
 def valid_source(source, local: bool = False) -> bool:
     """An https:// folder, github:owner/name (or the older bare owner/name),
     or, only when the user sets it (``local``), file:///path. Never http://."""
@@ -96,14 +114,13 @@ def valid_source(source, local: bool = False) -> bool:
 valid_repo = valid_source      # older name, still used by the server's admin console
 
 
-# Where clients up to 1.9 looked (a private repository, so only with a token).
-# A preference still pointing there is treated as "not set".
-_OLD_DEFAULT = "hacking-table/crptochat-client"
+# Clients up to 1.9 remembered the bare repository name; it is the default now.
+_OLD_DEFAULT = DEFAULT_REPO
 
 
 def default_source() -> str:
-    """CRPTOCHAT_UPDATE_URL when set, otherwise the site this binary was built for."""
-    return os.environ.get("CRPTOCHAT_UPDATE_URL") or DEFAULT_URL
+    """CRPTOCHAT_UPDATE_URL when set, otherwise what this binary was built for."""
+    return os.environ.get("CRPTOCHAT_UPDATE_URL") or DEFAULT_SOURCE
 
 
 def source_for(prefs: dict) -> str:
@@ -114,7 +131,27 @@ def source_for(prefs: dict) -> str:
     chosen = prefs.get("update_repo")
     if chosen and chosen != _OLD_DEFAULT and valid_source(chosen, local=True):
         return chosen
-    return DEFAULT_URL
+    return DEFAULT_SOURCE
+
+
+def fallback_for(source: str) -> str | None:
+    """Where to look when ``source`` (a GitHub repository) cannot be read:
+    the download site, or CRPTOCHAT_UPDATE_FALLBACK ("off" turns it off)."""
+    if not source.startswith("github:") and REPO_RE.fullmatch(source) is None:
+        return None
+    chosen = os.environ.get("CRPTOCHAT_UPDATE_FALLBACK")
+    if chosen is not None:
+        if chosen.strip().lower() in ("", "off", "0", "nao", "não", "none"):
+            return None
+        return chosen if valid_source(chosen, local=True) and not chosen.startswith("github:") else None
+    return DEFAULT_URL or None
+
+
+def describe(source: str) -> str:
+    """How a source is shown to people."""
+    if source.startswith("https://") or source.startswith("file:///"):
+        return source
+    return f"GitHub ({source.removeprefix('github:')}, última release)"
 
 
 def current() -> dict:
@@ -214,15 +251,71 @@ def _http(url: str, limit: int, deadline: float = ASSET_DEADLINE) -> bytes:
     return b"".join(chunks)
 
 
-def _location(source: str, name: str) -> str:
+def _http_json(url: str) -> dict:
+    """GitHub API call: anonymous (no token, ever), small, quick."""
+    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                                   "X-GitHub-Api-Version": "2022-11-28",
+                                                   "User-Agent": "crptochat-updater"})
+    opener = urllib.request.build_opener(
+        _HttpsOnlyRedirects(),
+        urllib.request.HTTPSHandler(context=_SSL_CONTEXT if _SSL_CONTEXT is not None else tls_context()))
+    with opener.open(request, timeout=SMALL_DEADLINE) as response:  # nosec B310
+        data = response.read(MAX_API + 1)
+    if len(data) > MAX_API:
+        raise UpdateError("resposta grande demais")
+    return json.loads(data)
+
+
+def github_release(repo: str) -> dict:
+    """The latest release of ``repo`` through the GitHub API: its tag and the
+    download address of each asset. Asset addresses must belong to that very
+    release of that repository (they then redirect to GitHub's storage)."""
+    url = f"{GITHUB_API}/repos/{repo}/releases/latest"
+    try:
+        data = _http_json(url)
+    except urllib.error.HTTPError as exc:
+        remaining = exc.headers.get("X-RateLimit-Remaining") if exc.headers else None
+        if exc.code in (403, 429) and (remaining == "0" or exc.code == 429):
+            raise SourceUnavailable("limite de consultas anônimas da API do GitHub atingido; tente mais tarde") from None
+        if exc.code == 404:
+            raise SourceUnavailable(f"nenhuma release publicada em github.com/{repo}") from None
+        raise SourceUnavailable(f"a API do GitHub respondeu HTTP {exc.code}") from None
+    except UpdateError as exc:
+        raise SourceUnavailable(str(exc)) from None
+    except Exception as exc:  # network errors, invalid JSON
+        raise SourceUnavailable(f"não consegui consultar a API do GitHub: {exc}") from None
+    tag = data.get("tag_name") if isinstance(data, dict) else None
+    if not isinstance(tag, str) or not tag or "/" in tag or len(tag) > 100:
+        raise SourceUnavailable("resposta inesperada da API do GitHub")
+    prefix = f"{GITHUB_WEB}/{repo}/releases/download/".lower()
+    assets = {}
+    for item in data.get("assets") or []:
+        if not isinstance(item, dict):
+            continue
+        name, link = item.get("name"), item.get("browser_download_url")
+        if not (isinstance(name, str) and isinstance(link, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,100}", name)):
+            continue
+        if not link.lower().startswith(prefix) or not link.endswith("/" + name):
+            raise UpdateError(f"a API do GitHub apontou {name} para fora da release ({link}); nada foi baixado")
+        assets[name] = link
+    return {"tag": tag, "assets": assets}
+
+
+def _location(source: str, name: str, release: dict | None = None) -> str:
     if source.startswith("https://"):
         return urllib.parse.urljoin(source if source.endswith("/") else source + "/", name)
-    repo = source.removeprefix("github:")
-    return f"https://github.com/{repo}/releases/latest/download/{name}"
+    if release is None:
+        release = github_release(source.removeprefix("github:"))
+    link = release["assets"].get(name)
+    if not link:
+        raise SourceUnavailable(f"{name} não está na release {release['tag']} do GitHub")
+    return link
 
 
-def fetch(source: str, name: str, limit: int = MAX_ASSET, deadline: float = ASSET_DEADLINE) -> bytes:
-    """One file of the latest release from ``source``."""
+def fetch(source: str, name: str, limit: int = MAX_ASSET, deadline: float = ASSET_DEADLINE,
+          release: dict | None = None) -> bytes:
+    """One file of the latest release from ``source``. For a GitHub source,
+    ``release`` (from github_release) pins every file to the same release."""
     if not valid_source(source, local=True):
         raise UpdateError(f"origem de atualização inválida: {source} (use https://…)")
     if source.startswith("file:///"):
@@ -230,21 +323,21 @@ def fetch(source: str, name: str, limit: int = MAX_ASSET, deadline: float = ASSE
             with open(os.path.join(source[len("file://"):], name), "rb") as fh:
                 data = fh.read(limit + 1)
         except OSError as exc:
-            raise UpdateError(f"{name} não encontrado em {source}") from exc
+            raise SourceUnavailable(f"{name} não encontrado em {source}") from exc
         if len(data) > limit:
             raise UpdateError("arquivo grande demais")
         return data
-    url = _location(source, name)
+    url = _location(source, name, release)
     try:
         return _http(url, limit, deadline)
     except UpdateError:
         raise
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            raise UpdateError(f"{name} não encontrado em {source}") from None
-        raise UpdateError(f"não consegui acessar {source}: HTTP {exc.code}") from None
+            raise SourceUnavailable(f"{name} não encontrado em {describe(source)}") from None
+        raise SourceUnavailable(f"não consegui acessar {describe(source)}: HTTP {exc.code}") from None
     except Exception as exc:  # urllib raises a zoo of exception types
-        raise UpdateError(f"não consegui acessar {source}: {exc}") from None
+        raise SourceUnavailable(f"não consegui acessar {describe(source)}: {exc}") from None
 
 
 # ----------------------------------------------------------------- manifest
@@ -300,18 +393,54 @@ def verify(manifest: bytes, signature: bytes | None, key: str = "") -> None:
 
 # ----------------------------------------------------------------- checking
 
-def latest(source: str, key: str = "") -> dict:
-    """Version info of the latest release. The signature is checked before
-    anything in the manifest is parsed or believed."""
-    manifest = fetch(source, MANIFEST, MAX_MANIFEST, SMALL_DEADLINE)
+_AUTO = object()
+
+
+def _sources(source: str, fallback) -> list[str]:
+    fallback = fallback_for(source) if fallback is _AUTO else fallback
+    return [source] + ([fallback] if fallback and fallback != source else [])
+
+
+def _check(source: str, key: str) -> tuple[dict, dict | None]:
+    """(signed info, pinned GitHub release or None) from one source."""
+    release = None
+    if not source.startswith(("https://", "file:///")) and valid_source(source):
+        release = github_release(source.removeprefix("github:"))
+    manifest = fetch(source, MANIFEST, MAX_MANIFEST, SMALL_DEADLINE, release)
     try:
-        signature = fetch(source, MANIFEST + ".sig", MAX_SIGNATURE, SMALL_DEADLINE)
-    except UpdateError:
+        signature = fetch(source, MANIFEST + ".sig", MAX_SIGNATURE, SMALL_DEADLINE, release)
+    except SourceUnavailable:
         signature = None
     verify(manifest, signature, key)
     info = parse_manifest(manifest)
     info["signed"] = bool(key or SIGNING_KEY)
-    return info
+    info["source"] = source
+    if release:
+        info["tag"] = release["tag"]
+    return info, release
+
+
+def _with_fallback(source: str, fallback, step):
+    """Run ``step(source)``; if the source cannot be read, run it on the fallback.
+    A security failure (UpdateError that is not SourceUnavailable) stops at once."""
+    errors = []
+    for candidate in _sources(source, fallback):
+        try:
+            result = step(candidate)
+        except SourceUnavailable as exc:
+            errors.append(f"{describe(candidate)}: {exc}")
+            continue
+        if errors and isinstance(result, dict):
+            result["fallback"] = errors[0]
+        return result
+    raise SourceUnavailable(" · ".join(errors))
+
+
+def latest(source: str, key: str = "", fallback=_AUTO) -> dict:
+    """Version info of the latest release. The signature is checked before
+    anything in the manifest is parsed or believed. ``info["source"]`` says
+    where it came from (the fallback when GitHub could not be read)."""
+    return _with_fallback(source, fallback, lambda candidate: _check(candidate, key)[0])
 
 
 def _version(text) -> tuple:
@@ -329,8 +458,11 @@ def is_newer(info: dict, mine: dict | None = None) -> bool:
             and int(info["built"]) > int(mine.get("built") or 0))
 
 
-def apply(source: str, key: str = "", target: str | None = None) -> dict:
-    """Download, verify and install the latest release over the running binary."""
+def apply(source: str, key: str = "", target: str | None = None, fallback=_AUTO) -> dict:
+    """Download, verify and install the latest release over the running binary.
+    Manifest, signature and binary all come from the same source (and, on
+    GitHub, the same release); the fallback is used only if that source
+    cannot be read."""
     if not target and not can_self_update():
         raise UpdateError("esta instalação não é o binário compilado: atualize com 'pip install -U' no código-fonte")
     if not (key or SIGNING_KEY):
@@ -338,18 +470,31 @@ def apply(source: str, key: str = "", target: str | None = None) -> dict:
                           "instale a versão nova pelo site, conferindo a assinatura")
     target = target or sys.executable
     name = asset_name()
-    info = latest(source, key)
     mine = current()
-    if not is_newer(info, mine):
-        raise UpdateError(
-            f"a release publicada ({info['version']}, {info['commit']}) não é mais nova que este binário "
-            f"({mine['version']}, {mine['commit'] or 'sem commit'}); nada foi instalado (proteção contra downgrade)")
-    expected = info["files"].get(name)
-    if not expected:
-        raise UpdateError(f"a release não tem binário para esta plataforma ({name})")
-    binary = fetch(source, name, MAX_ASSET, ASSET_DEADLINE)
-    if hashlib.sha256(binary).hexdigest() != expected:
-        raise UpdateError("o binário baixado não confere com o manifesto assinado; nada foi instalado")
+
+    def download(candidate: str) -> tuple[dict, bytes]:
+        info, release = _check(candidate, key)
+        if not is_newer(info, mine):
+            raise UpdateError(
+                f"a release publicada ({info['version']}, {info['commit']}) não é mais nova que este binário "
+                f"({mine['version']}, {mine['commit'] or 'sem commit'}); nada foi instalado (proteção contra downgrade)")
+        expected = info["files"].get(name)
+        if not expected:
+            raise UpdateError(f"a release não tem binário para esta plataforma ({name})")
+        binary = fetch(candidate, name, MAX_ASSET, ASSET_DEADLINE, release)
+        if hashlib.sha256(binary).hexdigest() != expected:
+            raise UpdateError("o binário baixado não confere com o manifesto assinado; nada foi instalado")
+        return info, binary
+
+    errors = []
+    for candidate in _sources(source, fallback):
+        try:
+            info, binary = download(candidate)
+            break
+        except SourceUnavailable as exc:
+            errors.append(f"{describe(candidate)}: {exc}")
+    else:
+        raise SourceUnavailable(" · ".join(errors))
 
     folder = os.path.dirname(os.path.abspath(target))
     fd, tmp = tempfile.mkstemp(prefix=".crptochat-update-", dir=folder)

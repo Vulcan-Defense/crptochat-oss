@@ -34,14 +34,19 @@ pip install .
 Isso instala quatro comandos: `crptochat` (cliente), `crptochat-server`,
 `crptochat-dash` (painel do operador) e `crptochat-admin` (administração).
 
-**Só o cliente, já compilado** (Linux e macOS): o site
-`https://crptochat.acpt.app.br/downloads/` publica cada release, com um
+**Só o cliente, já compilado** (Linux e macOS): cada release sai em
+[github.com/hacking-table/crptochat-client/releases](https://github.com/hacking-table/crptochat-client/releases)
+e é espelhada no site `https://crptochat.acpt.app.br/downloads/`, com um
 `install.sh` que traz a chave pública de assinatura embutida. Não precisa de
 conta no GitHub.
 
 ```bash
-curl -fsSLO --proto '=https' https://crptochat.acpt.app.br/downloads/install.sh && sh install.sh
+curl -fsSLO --proto '=https' https://github.com/hacking-table/crptochat-client/releases/latest/download/install.sh && sh install.sh
 ```
+
+O instalador baixa da última release do GitHub (descobre a tag uma vez e pega
+tudo dela) e, se o GitHub não responder, do site. `CRPTOCHAT_UPDATE_URL=https://…`
+fixa uma origem só; `CRPTOCHAT_UPDATE_FALLBACK=off` tira o site do caminho.
 
 Antes de instalar, ele confere a assinatura Ed25519 do manifesto `RELEASE`
 (`RELEASE.sig`) com a chave embutida e o SHA-256 do binário contra esse
@@ -705,16 +710,23 @@ enquanto está aberto. Quando acha uma, a barra do topo mostra
   `/update` ainda a instala, se você mudar de ideia).
 
 Também dá para instalar com `/update` (ou `Esc` → *Atualizar o crptochat*, ou
-`crptochat --update` fora do chat). Desde a 1.10.0 ele busca no **site
-público** `https://crptochat.acpt.app.br/downloads/`, sem login nem token:
-confere a assinatura do manifesto, a versão e o SHA-256, testa o binário novo e
-só então substitui o atual; basta abrir o chat de novo. `/update check` só
+`crptochat --update` fora do chat). Desde a 1.18.0 ele busca a **última
+release do GitHub** (`hacking-table/crptochat-client`): pergunta à API
+(`api.github.com/repos/…/releases/latest`) qual é a release e quais arquivos
+ela tem, e baixa tudo dessa mesma release (os arquivos redirecionam para o
+armazenamento do GitHub, sempre em https). Se a API não responder ou bater o
+limite de consultas anônimas (60 por hora por endereço), usa o **site**
+`https://crptochat.acpt.app.br/downloads/`, que espelha a mesma release.
+Sem login nem token, venha de onde vier: confere a assinatura do manifesto, a
+versão e o SHA-256, testa o binário novo e só então substitui o atual; basta
+abrir o chat de novo. `/update check` só
 verifica e `/update off` desliga as verificações automáticas e a pergunta.
 Instalações pelo código-fonte só recebem o aviso (atualize com `git pull` e `pip`).
 
-> **Quem tem a 1.9.0 ou anterior:** essas versões ainda procuram no GitHub
-> (repositório privado) e não acham a atualização. Instale a 1.10.0 **uma vez**
-> pelo site (veja *Instalação*); daí em diante o `/update` puxa do site.
+> **Quem tem a 1.9.0 ou anterior:** essas versões procuram num lugar que não
+> existe mais e não acham a atualização. Instale a versão nova **uma vez** (veja
+> *Instalação*); daí em diante o `/update` funciona. Clientes de 1.10 a 1.17
+> continuam atualizando pelo site, que segue espelhando cada release.
 
 Segurança da atualização:
 
@@ -732,16 +744,28 @@ Segurança da atualização:
   contra o SHA-256 do manifesto assinado, executado uma vez (`--version`) e só
   então troca de lugar com o atual, de uma vez (`rename`).
 - **Só HTTPS, sem credenciais.** `http://` é recusado, inclusive em
-  redirecionamentos. Nenhum token, cookie ou login é mandado ao site. Cada
-  download tem limite de tamanho (64 KiB o manifesto, 1 KiB a assinatura,
-  200 MiB o binário) e de tempo total.
+  redirecionamentos. Nenhum token, cookie ou login é mandado ao GitHub nem ao
+  site, mesmo com `GH_TOKEN` ou `GITHUB_TOKEN` no ambiente. Cada download tem
+  limite de tamanho (1 MiB a resposta da API, 64 KiB o manifesto, 1 KiB a
+  assinatura, 200 MiB o binário) e de tempo total. O certificado é sempre
+  conferido, com as CAs do sistema e as do certifi que vêm no binário.
+- **Uma release só.** A release é resolvida uma vez e manifesto, assinatura e
+  binário vêm todos dela: se uma release nova sair no meio do download, nada se
+  mistura. Endereço de arquivo que a API aponte para fora daquela release do
+  repositório é recusado.
+- **Plano B só para indisponibilidade.** O site entra apenas quando o GitHub não
+  pôde ser lido (rede, limite da API, arquivo ainda subindo). Assinatura
+  inválida, SHA-256 que não confere ou downgrade vindos do GitHub param tudo, sem
+  tentar o site. `CRPTOCHAT_UPDATE_FALLBACK=https://…` troca o plano B e
+  `CRPTOCHAT_UPDATE_FALLBACK=off` o desliga.
 - **Ninguém troca a origem por você.** `CRPTOCHAT_UPDATE_URL=https://…` muda a
   origem (para um espelho, por exemplo). `/update origem https://…` (ou
   `crptochat --update-repo https://…`) também, e fica salvo; `/update origem
-  padrao` volta ao site. O operador do servidor pode **sugerir** uma origem no
-  console (`updaterepo https://…`), mas cada pessoa confirma a troca. Também
-  dá para usar `github:dono/repo` (release mais recente do GitHub, acesso
-  anônimo, só para repositório público) ou `file:///pasta` (espelho local).
+  padrao` volta ao padrão (GitHub, com o site de plano B). O operador do
+  servidor pode **sugerir** uma origem no console (`updaterepo https://…`), mas
+  cada pessoa confirma a troca. Também dá para usar `github:dono/repo` (release
+  mais recente de outro repositório público, acesso anônimo) ou `file:///pasta`
+  (espelho local).
 
 Para publicar (quem mantém o repositório):
 
@@ -755,12 +779,14 @@ A chave pública vai na variável de repositório `CLIENT_SIGNING_PUBKEY`
 publicar, o workflow confere a assinatura com a chave pública, então um par
 trocado falha no CI em vez de gerar releases que ninguém aceita.
 
-O workflow `release-client` embute nos binários a origem de atualização
-(`CLIENT_UPDATE_URL`, padrão `https://crptochat.acpt.app.br/downloads/`) e
-publica a release em `CLIENT_RELEASE_REPO`. **O site precisa receber os mesmos
-arquivos da release** (`RELEASE`, `RELEASE.sig`, `SHA256SUMS`, `install.sh` e
-os binários), e cada release que deve chegar pelo `/update` precisa de uma
-versão nova em `crptochat/__init__.py`.
+O workflow `release-client` publica a release em `CLIENT_RELEASE_REPO` e
+embute nos binários as origens de atualização: `CLIENT_UPDATE_SOURCE` (padrão
+`github:` + `CLIENT_RELEASE_REPO`, a última release pela API) e, como plano B,
+`CLIENT_UPDATE_URL` (padrão `https://crptochat.acpt.app.br/downloads/`). **O
+site precisa continuar recebendo os mesmos arquivos da release** (`RELEASE`,
+`RELEASE.sig`, `SHA256SUMS`, `install.sh` e os binários): é o plano B dos
+binários novos e a única origem dos clientes de 1.10 a 1.17. Cada release que
+deve chegar pelo `/update` precisa de uma versão nova em `crptochat/__init__.py`.
 
 ### Mensagens de voz
 

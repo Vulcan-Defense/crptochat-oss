@@ -90,12 +90,28 @@ def test_sources_are_strict():
 
 def test_where_updates_come_from(monkeypatch):
     monkeypatch.delenv("CRPTOCHAT_UPDATE_URL", raising=False)
+    monkeypatch.delenv("CRPTOCHAT_UPDATE_FALLBACK", raising=False)
+    # the latest GitHub release first, the site as the fallback
+    assert update.DEFAULT_SOURCE == "github:hacking-table/crptochat-client"
     assert update.DEFAULT_URL == "https://crptochat.acpt.app.br/downloads/"
-    assert update.source_for({}) == update.DEFAULT_URL
-    # what clients up to 1.9 remembered (the private repository) no longer counts
-    assert update.source_for({"update_repo": "hacking-table/crptochat-client"}) == update.DEFAULT_URL
+    assert update.source_for({}) == update.DEFAULT_SOURCE
+    assert update.fallback_for(update.DEFAULT_SOURCE) == update.DEFAULT_URL
+    assert update.fallback_for("acme/builds") == update.DEFAULT_URL
+    assert update.fallback_for(update.DEFAULT_URL) is None             # the site has no fallback
+    assert update.fallback_for("file:///srv/mirror") is None
+    monkeypatch.setenv("CRPTOCHAT_UPDATE_FALLBACK", "https://espelho.example/dl/")
+    assert update.fallback_for(update.DEFAULT_SOURCE) == "https://espelho.example/dl/"
+    for off in ("off", "", "0"):
+        monkeypatch.setenv("CRPTOCHAT_UPDATE_FALLBACK", off)
+        assert update.fallback_for(update.DEFAULT_SOURCE) is None
+    for refused in ("http://espelho.example/dl/", "github:outro/repo"):
+        monkeypatch.setenv("CRPTOCHAT_UPDATE_FALLBACK", refused)
+        assert update.fallback_for(update.DEFAULT_SOURCE) is None
+    monkeypatch.delenv("CRPTOCHAT_UPDATE_FALLBACK")
+    # what clients up to 1.9 remembered (the bare repository name) is the default now
+    assert update.source_for({"update_repo": "hacking-table/crptochat-client"}) == update.DEFAULT_SOURCE
     assert update.source_for({"update_repo": "https://mirror.example/c/"}) == "https://mirror.example/c/"
-    assert update.source_for({"update_repo": "http://mirror.example/c/"}) == update.DEFAULT_URL
+    assert update.source_for({"update_repo": "http://mirror.example/c/"}) == update.DEFAULT_SOURCE
     monkeypatch.setenv("CRPTOCHAT_UPDATE_URL", "https://other.example/dl/")
     assert update.source_for({"update_repo": "https://mirror.example/c/"}) == "https://other.example/dl/"
     monkeypatch.setenv("CRPTOCHAT_UPDATE_URL", "http://other.example/dl/")
@@ -343,7 +359,7 @@ def test_admin_sets_repo_and_clients_only_switch_after_confirming(tmp_path, monk
     from crptochat.tui import ChatApp, ChoiceScreen
 
     repo = make_release(tmp_path / "rel")
-    monkeypatch.setattr(update, "DEFAULT_URL", repo)
+    monkeypatch.setattr(update, "DEFAULT_SOURCE", repo)
     monkeypatch.delenv("CRPTOCHAT_UPDATE_URL", raising=False)
     monkeypatch.setattr(update, "__version__", "1.0.0")
 
