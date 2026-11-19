@@ -1221,28 +1221,35 @@ Os clientes conectam com `crptochat SEU_HOST --pin FINGERPRINT`.
 
 ### Deploy automático pelo GitHub
 
-O workflow `deploy-server` publica o servidor numa VM quando uma release
-`vX.Y.Z` deste repositório é publicada (pré-releases não), ou à mão em
-*Actions → deploy-server → Run workflow*, informando a tag. Antes de qualquer
-coisa ele espera a aprovação do environment `production`.
+O workflow `deploy-server` publica o servidor numa VM **na mesma versão** do
+cliente que acabou de sair. Ele dispara sozinho (`workflow_run`) quando o
+`release-client` termina com sucesso na `main` deste repositório, e também dá
+para rodar à mão em *Actions → deploy-server → Run workflow*, informando a tag.
+Antes de qualquer coisa ele espera a aprovação do environment `production`.
 
 O que ele faz, e o que **não** faz:
 
-- Confere que a tag tem o formato `vX.Y.Z` e existe neste repositório.
-- Abre **uma** conexão SSH, com `known_hosts` fixo (`StrictHostKeyChecking=yes`,
-  sem `~/.ssh/config` e sem agente) e prazo de 15 minutos, e manda **só a tag**
-  (por exemplo `v1.19.0`). Não manda comando de shell: quem decide o que rodar é
-  a VM. Se o SSH ou o deploy falharem, o job falha.
+- Descobre a tag: no disparo automático, lê `__version__` de
+  `crptochat/__init__.py` no commit que o `release-client` construiu
+  (`head_sha` do run) e monta `vX.Y.Z`; no manual, usa a tag informada.
+- Confere que a tag tem o formato `vX.Y.Z` (`^v[0-9]+\.[0-9]+\.[0-9]+$`) e que
+  a release `vX.Y.Z` existe e está publicada (nem rascunho nem pré-release) em
+  `hacking-table/crptochat-client`, onde o `release-client` publica (a variável
+  `CLIENT_RELEASE_REPO` troca o repositório, como no `release-client`). Sem a
+  release, nada é enviado à VM.
+- Grava o `known_hosts` do secret em `~/.ssh/known_hosts` e abre **uma**
+  conexão SSH (`StrictHostKeyChecking=yes`, sem `ssh_config`, sem agente,
+  prazo de 15 minutos) mandando **só a tag**, por exemplo `v1.19.0`. Não manda
+  comando de shell: quem decide o que rodar é a VM. Qualquer saída diferente
+  de 0 (do SSH ou do deploy na VM) falha o job.
 - Um deploy por vez (os seguintes esperam, nenhum é cancelado no meio), token
   do GitHub só com `contents: read`, nenhuma action de terceiros, e a chave
   apagada do runner no fim.
 
-Configuração no GitHub (*Settings → Environments → production*): marque
-*Required reviewers* e cadastre os secrets `DEPLOY_SSH_KEY` (chave privada só
-para o deploy), `DEPLOY_HOST`, `DEPLOY_USER` e `DEPLOY_KNOWN_HOSTS` (a linha da
-chave do host, como sai de `ssh-keyscan -t ed25519 HOST`, conferida por outro
-meio). Se o SSH não for na porta 22, crie a variável `DEPLOY_PORT`; nesse caso a
-linha do `known_hosts` fica `[HOST]:PORTA ssh-ed25519 …`.
+Configuração no GitHub (*Settings → Environments → production*): *Required
+reviewers* e os secrets `DEPLOY_SSH_KEY` (chave privada só para o deploy),
+`DEPLOY_HOST`, `DEPLOY_USER` e `DEPLOY_KNOWN_HOSTS` (a linha da chave do host,
+como sai de `ssh-keyscan -t ed25519 HOST`, conferida por outro meio).
 
 Na VM, a chave pública do deploy entra no `authorized_keys` do usuário presa a
 um comando forçado, sem shell, túnel nem encaminhamento:
@@ -1252,7 +1259,8 @@ command="/usr/local/bin/crptochat-deploy",restrict ssh-ed25519 AAAA… deploy-gi
 ```
 
 O comando recebe a tag em `SSH_ORIGINAL_COMMAND` e precisa validá-la de novo,
-porque é a única coisa que vem de fora. Um esboço:
+porque é a única coisa que vem de fora; depois confere a release, faz backup,
+publica, roda o health check e volta atrás se ele falhar. Um esboço do começo:
 
 ```sh
 #!/bin/sh
