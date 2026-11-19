@@ -179,6 +179,7 @@ HELP = [
     ("/passwd", "troca a senha que protege a sua chave (chave e nick continuam os mesmos)"),
     ("/search texto  (ou Ctrl+F)", "busca nas conversas abertas (só na memória local)"),
     ("/notify on|off|preview on|off", "notificações do sistema em menção e mensagem direta"),
+    ("/announce [importante] [--dias N] texto", "admin: fixa um recado no topo do #lobby (/announce del ID remove)"),
     ("/clear", "limpa a tela atual"),
     ("/quit", "sai"),
 ]
@@ -189,7 +190,7 @@ REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "�
              "coração": "❤️", "fogo": "🔥", "triste": "😢", "uau": "😮", "olhos": "👀", "check": "✅"}
 
 COMMANDS = ["/help", "/menu", "/list", "/create", "/join", "/leave", "/msg", "/query", "/send", "/rec", "/voicemask", "/play", "/stop", "/accept",
-            "/reject", "/reply", "/react", "/edit", "/del", "/receipts", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
+            "/reject", "/announce", "/reply", "/react", "/edit", "/del", "/receipts", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
             "/kick", "/ban", "/unban", "/bans", "/roles", "/policy", "/invite", "/owner", "/gkick", "/gban", "/gunban",
             "/who", "/whois", "/verify", "/unverify", "/fp", "/passwd", "/search", "/notify", "/clear", "/quit"]
 
@@ -579,6 +580,11 @@ class ChatApp(App):
            scrollbar-color: $cc-magenta; scrollbar-background: $cc-bg; }
     #members { width: 26; height: 100%; border: heavy $cc-purple; border-title-color: $cc-yellow;
                border-title-style: bold; padding: 0 1; background: $cc-bg; }
+    #pinned { height: auto; max-height: 14; display: none; border: heavy $cc-orange; border-title-color: $cc-yellow;
+              border-title-style: bold; border-subtitle-color: $cc-dim; background: $cc-panel; padding: 0 1;
+              margin: 0 0 1 0; }
+    #pinned.show { display: block; }
+    #pinned.important { border: double $cc-magenta; }
     #transfer { height: 1; padding: 0 2; display: none; background: $cc-panel; }
     #transfer.active { display: block; }
     #inputbar { height: 3; border: heavy $cc-magenta; border-title-color: $cc-cyan;
@@ -653,6 +659,7 @@ class ChatApp(App):
         with Horizontal(id="main"):
             yield BufferList(id="buffers")
             with Vertical(id="center"):
+                yield Static(id="pinned")
                 yield ChatLog(id="log", wrap=True, markup=False, highlight=False, max_lines=3000, min_width=20)
             yield Static(id="members")
         yield Static(id="transfer")
@@ -732,8 +739,85 @@ class ChatApp(App):
         if target is not None:
             self.call_after_refresh(lambda: self.log_w.scroll_to(y=max(0, target - 3), animate=False))
 
+    LOBBY = "#lobby"
+
+    def render_pinned(self) -> None:
+        """The administration's pinned notices, at the top of #lobby."""
+        widget = self.query_one("#pinned", Static)
+        items = self.client.announcements
+        show = self.current == self.LOBBY and bool(items)
+        widget.set_class(show, "show")
+        if not show:
+            return
+        important = any(a["level"] == "important" for a in items)
+        widget.set_class(important, "important")
+        out = Text()
+        for index, item in enumerate(items):
+            if index:
+                out.append("\n")
+            if item["level"] == "important":
+                out.append(" ‼ IMPORTANTE ", style=f"bold {BG} on {MAGENTA}")
+            else:
+                out.append(" 📌 ", style=f"bold {YELLOW}")
+            out.append(" " + clean(item["text"]), style=f"bold {TEXT}")
+            when = time.strftime("%d/%m", time.localtime(item["ts"])) if item["ts"] else ""
+            out.append(f"  — {item['by'] or 'administração'}{' · ' + when if when else ''} · #{item['id']}", style=DIM)
+        widget.update(out)
+        widget.border_title = "📣 RECADOS DA ADMINISTRAÇÃO"
+        widget.border_subtitle = "fixados pelo servidor · não são mensagens cifradas de ponta a ponta"
+
+    def ev_announcements(self, items: list, new: list, on_connect: bool = False) -> None:
+        if on_connect and items:
+            self.note(f"📣 {len(items)} recado(s) da administração fixado(s) no {self.LOBBY}: /join {self.LOBBY}"
+                      + " ou /announce para ler", "warn", CONSOLE)
+        for item in new:
+            tag = "‼ RECADO IMPORTANTE" if item["level"] == "important" else "📣 NOVO RECADO"
+            line = Text.assemble(self.stamp(), (f"  ▓▒░ {tag} ░▒▓ ", f"bold {MAGENTA if item['level'] == 'important' else ORANGE}"),
+                                 (clean(item["text"]), f"bold {TEXT}"), (f"  — {item['by'] or 'administração'}", DIM))
+            self.add_line(CONSOLE, line, alert=True)
+            if self.LOBBY in self.buffers:
+                self.add_line(self.LOBBY, line.copy(), alert=True)
+            self.desktop_notify(self.LOBBY, item["by"] or "administração", item["text"], True)
+        if new:
+            self.bell()
+        self.render_pinned()
+
+    async def cmd_announce(self, rest: str):
+        words = rest.split()
+        if not words:
+            if not self.client.announcements:
+                self.note("nenhum recado fixado no #lobby", "info")
+            for item in self.client.announcements:
+                mark = "IMPORTANTE · " if item["level"] == "important" else ""
+                self.note(f"#{item['id']} {mark}{item['text']} — {item['by'] or 'administração'}", "warn")
+            if self.client.role == "admin":
+                self.note("/announce [importante] [--dias N] texto fixa um recado · /announce del ID remove", "info")
+            return
+        if self.client.role != "admin":
+            raise ChatError("só admins do servidor fixam recados no #lobby")
+        if words[0] in ("del", "rm", "remover"):
+            if len(words) != 2 or not words[1].lstrip("#").isdigit():
+                raise ChatError("uso: /announce del ID")
+            await self.client.announce_del(int(words[1].lstrip("#")))
+            self.note(f"recado {words[1]} removido do #lobby de todos", "ok")
+            return
+        level, days = "info", 0
+        if words[0].lower() in ("importante", "important", "!"):
+            level, words = "important", words[1:]
+        if len(words) >= 2 and words[0] in ("--dias", "--days"):
+            if not words[1].isdigit():
+                raise ChatError("uso: /announce [importante] [--dias N] texto")
+            days, words = int(words[1]), words[2:]
+        text = " ".join(words)
+        if not text:
+            raise ChatError("uso: /announce [importante] [--dias N] texto")
+        ident = await self.client.announce(text, level, days)
+        self.note(f"recado #{ident} fixado no #lobby de todos" + (f" por {days} dias" if days else
+                                                                 f" até ser removido (/announce del {ident})"), "ok")
+
     def refresh_all(self, refill: bool = False) -> None:
         self.render_topbar()
+        self.render_pinned()
         self.render_buffers()
         self.render_members()
         buf = self.buffers[self.current]

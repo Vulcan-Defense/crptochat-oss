@@ -150,6 +150,7 @@ docker exec -it crptochat python -m crptochat.admin --data /data   # no Docker
 | `channels`, `chan #CANAL` | canais, donos, políticas e bans |
 | `chanrole #CANAL NICK owner\|op\|voice\|none`, `policy #CANAL NOME VALOR`, `chanunban` | intervém em qualquer canal |
 | `guests on\|off`, `notice TEXTO` | acesso anônimo, aviso para todos online |
+| `announce [importante] [--dias N] TEXTO`, `announce del ID`, `announce` | recados fixados no topo do `#lobby` (veja abaixo) |
 | `updaterepo [https://…\|github:dono/repo\|none]` | origem de atualização sugerida aos clientes (padrão: o site) |
 | `ratelimit [show\|set NOME VALOR\|reset NOME\|all]` | limites anti-flood e quantas vezes dispararam |
 | `health [watch]` | painel de saúde (abaixo); `watch` atualiza a cada 2 s |
@@ -164,6 +165,27 @@ as versões dos clientes conectados. São só contagens: nenhum nick, canal ou
 endereço aparece. Clientes 1.8+ informam a versão no login (só o número;
 qualquer outra coisa é descartada); os mais antigos aparecem como
 "antiga (não informa)".
+
+**Recados no `#lobby`** (desde a 1.19.0): admins fixam avisos que ficam num
+painel chamativo no topo do `#lobby` de todos os clientes até expirarem ou serem
+removidos. Servem para comunicar o que importa (uma mudança na atualização,
+uma manutenção marcada) sem depender de quem estava online na hora, ao
+contrário do `notice`.
+
+- Pelo chat: `/announce importante O /update agora vem do GitHub`,
+  `/announce --dias 3 manutenção sábado às 22h`, `/announce del 2` e
+  `/announce` para listar. Pelo console: `announce …` (assina como
+  "administração").
+- No `#lobby` o painel mostra cada recado com o autor, a data e o número;
+  `importante` ganha selo ‼ e borda dupla magenta. Quem está conectado quando um
+  recado chega recebe aviso no console e no `#lobby`, bipe e notificação do
+  sistema; quem conecta depois vê o painel e uma linha no console, sem alarme.
+- Até 10 recados ao mesmo tempo, 500 caracteres cada, só texto em uma linha
+  (caracteres de controle são removidos no servidor e no cliente), validade de
+  0 (até remover) a 365 dias. Só admins: moderadores não fixam.
+- São o servidor falando, como o MOTD: **não** são mensagens cifradas de ponta a
+  ponta, e o painel diz isso. Clientes anteriores à 1.19 simplesmente não os
+  mostram.
 
 Admins valem como dono em qualquer canal e moderadores como operador. Pelo
 próprio chat a equipe usa `/gkick`, `/gban nick 7d --ip motivo` e `/gunban`
@@ -410,6 +432,7 @@ Tudo o que o menu faz também existe como comando:
 | `/unverify nick` | remove a marca ✓ |
 | `/search texto` (ou `Ctrl+F`) | busca nas conversas abertas, só na memória local |
 | `/notify on\|off`, `/notify preview on\|off` | notificações do sistema em menção e mensagem direta |
+| `/announce [importante] [--dias N] texto`, `/announce del ID` | admin: fixa (ou remove) um recado no topo do `#lobby`; `/announce` lista |
 | `/clear`, `/quit` | limpa a tela, sai |
 
 Teclas: `Esc` abre o menu, `F2` grava áudio, `Ctrl+N`/`Ctrl+P` trocam de janela (ou clique na lista), `PgUp`/`PgDn`
