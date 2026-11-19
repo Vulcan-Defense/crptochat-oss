@@ -70,6 +70,13 @@ async def main(binary: str) -> None:
     version = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=60)
     assert version.returncode == 0 and version.stdout.strip(), version
     print("versão do binário:", version.stdout.strip())
+    # the updater must trust public CAs on its own (macOS has none for a frozen OpenSSL)
+    tls = subprocess.run([binary, "--tls-info"], capture_output=True, text=True, timeout=60)
+    assert tls.returncode == 0, tls
+    fields = dict(part.split("=", 1) for part in tls.stdout.split()[1:])
+    assert fields.get("bundle") == "sim" and int(fields.get("ca", 0)) >= 100, \
+        f"o binário não traz o pacote de CAs do certifi: {tls.stdout.strip()}"
+    print("ok:", tls.stdout.strip())
 
     tmp = tempfile.mkdtemp(prefix="crptochat-smoke-")
     os.environ["CRPTOCHAT_HOME"] = os.path.join(tmp, "peer")

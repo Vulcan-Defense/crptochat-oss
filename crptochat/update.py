@@ -147,6 +147,43 @@ class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
 
 _ALLOW_HTTP = False      # tests only (local plain-http servers)
 _SSL_CONTEXT = None      # tests only (a local https server with its own certificate)
+_TLS_CONTEXT = None      # built once, on first use
+
+
+def _ca_bundle() -> str | None:
+    """Path of the CA bundle shipped with the client (certifi), if present."""
+    try:
+        import certifi
+    except ImportError:
+        return None
+    path = certifi.where()
+    return path if path and os.path.isfile(path) else None
+
+
+def tls_context():
+    """TLS context for the update site: certificate and host name always checked.
+
+    It trusts the system's CAs plus the bundle shipped with the client
+    (certifi). The binary built by PyInstaller carries its own OpenSSL, which
+    on macOS (and on some minimal Linux installs) finds no system CA at all:
+    without the bundle every update failed with CERTIFICATE_VERIFY_FAILED.
+    SSL_CERT_FILE / SSL_CERT_DIR still add CAs (a company proxy, for example)."""
+    global _TLS_CONTEXT
+    if _TLS_CONTEXT is None:
+        import ssl
+        ctx = ssl.create_default_context()            # system CAs, CERT_REQUIRED, check_hostname
+        bundle = _ca_bundle()
+        if bundle:
+            ctx.load_verify_locations(cafile=bundle)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        _TLS_CONTEXT = ctx
+    return _TLS_CONTEXT
+
+
+def tls_info() -> dict:
+    """What the update client trusts (for --tls-info and the release smoke test)."""
+    ctx = tls_context()
+    return {"ca": ctx.cert_store_stats().get("x509_ca", 0), "bundle": _ca_bundle()}
 
 
 def _http(url: str, limit: int, deadline: float = ASSET_DEADLINE) -> bytes:
@@ -155,9 +192,8 @@ def _http(url: str, limit: int, deadline: float = ASSET_DEADLINE) -> bytes:
     if not url.startswith("https://") and not _ALLOW_HTTP:
         raise UpdateError("só https é aceito para baixar atualizações")
     request = urllib.request.Request(url, headers={"Accept": "*/*", "User-Agent": "crptochat-updater"})
-    handlers = [_HttpsOnlyRedirects()]
-    if _SSL_CONTEXT is not None:
-        handlers.append(urllib.request.HTTPSHandler(context=_SSL_CONTEXT))
+    handlers = [_HttpsOnlyRedirects(),
+                urllib.request.HTTPSHandler(context=_SSL_CONTEXT if _SSL_CONTEXT is not None else tls_context())]
     opener = urllib.request.build_opener(*handlers)
     stop = time.monotonic() + deadline
     chunks, size = [], 0
