@@ -1219,4 +1219,56 @@ docker exec crptochat python -m crptochat.selftest --probe 127.0.0.1:7777 --stat
 
 Os clientes conectam com `crptochat SEU_HOST --pin FINGERPRINT`.
 
+### Deploy automático pelo GitHub
+
+O workflow `deploy-server` publica o servidor numa VM quando uma release
+`vX.Y.Z` deste repositório é publicada (pré-releases não), ou à mão em
+*Actions → deploy-server → Run workflow*, informando a tag. Antes de qualquer
+coisa ele espera a aprovação do environment `production`.
+
+O que ele faz, e o que **não** faz:
+
+- Confere que a tag tem o formato `vX.Y.Z` e existe neste repositório.
+- Abre **uma** conexão SSH, com `known_hosts` fixo (`StrictHostKeyChecking=yes`,
+  sem `~/.ssh/config` e sem agente) e prazo de 15 minutos, e manda **só a tag**
+  (por exemplo `v1.19.0`). Não manda comando de shell: quem decide o que rodar é
+  a VM. Se o SSH ou o deploy falharem, o job falha.
+- Um deploy por vez (os seguintes esperam, nenhum é cancelado no meio), token
+  do GitHub só com `contents: read`, nenhuma action de terceiros, e a chave
+  apagada do runner no fim.
+
+Configuração no GitHub (*Settings → Environments → production*): marque
+*Required reviewers* e cadastre os secrets `DEPLOY_SSH_KEY` (chave privada só
+para o deploy), `DEPLOY_HOST`, `DEPLOY_USER` e `DEPLOY_KNOWN_HOSTS` (a linha da
+chave do host, como sai de `ssh-keyscan -t ed25519 HOST`, conferida por outro
+meio). Se o SSH não for na porta 22, crie a variável `DEPLOY_PORT`; nesse caso a
+linha do `known_hosts` fica `[HOST]:PORTA ssh-ed25519 …`.
+
+Na VM, a chave pública do deploy entra no `authorized_keys` do usuário presa a
+um comando forçado, sem shell, túnel nem encaminhamento:
+
+```
+command="/usr/local/bin/crptochat-deploy",restrict ssh-ed25519 AAAA… deploy-github
+```
+
+O comando recebe a tag em `SSH_ORIGINAL_COMMAND` e precisa validá-la de novo,
+porque é a única coisa que vem de fora. Um esboço:
+
+```sh
+#!/bin/sh
+# /usr/local/bin/crptochat-deploy: só aceita vX.Y.Z; qualquer outra coisa é recusada
+set -eu
+tag="${SSH_ORIGINAL_COMMAND:-}"
+case "$tag" in ''|*[!v0-9.]*) echo "tag recusada" >&2; exit 2 ;; esac   # só v, dígitos e pontos: nem espaço, nem quebra de linha
+printf '%s\n' "$tag" | grep -Eqx 'v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})' \
+    || { echo "tag recusada" >&2; exit 2; }
+cd /opt/crptochat-oss
+git fetch --quiet --tags origin
+git -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
+docker compose build --quiet
+docker run --rm --entrypoint python crptochat-server -m crptochat.selftest
+docker compose up -d
+docker exec crptochat python -m crptochat.selftest --probe 127.0.0.1:7777 --stats /data
+```
+
 Licença MIT.
