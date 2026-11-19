@@ -5,117 +5,306 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="dark">
 <title>crptochat · downloads</title>
-<meta name="description" content="Chat de terminal com criptografia ponta a ponta, código aberto (MIT). Baixe o cliente, confira a assinatura e conecte em crptochat.acpt.app.br.">
+<meta name="description" content="Chat de terminal com criptografia ponta a ponta, código aberto (MIT). Double Ratchet, camada pós-quântica e mensagens offline. Baixe o cliente, confira a assinatura e conecte em crptochat.acpt.app.br.">
 <style>
   :root {
-    --bg: #0b0b14; --panel: #12121f; --line: #2a2a44; --text: #e6e6f0; --dim: #8b8ba7;
-    --cyan: #3cf0ff; --magenta: #ff2fa0; --yellow: #ffe14d; --green: #3dff8a; --orange: #ffaa33;
+    --bg: #07070f; --bg2: #0d0d1a; --panel: #11111f; --panel2: #161629; --line: #26264a; --text: #e8e8f4; --dim: #8d8db0;
+    --cyan: #3cf0ff; --magenta: #ff2fa0; --yellow: #ffe14d; --green: #3dff8a; --orange: #ffaa33; --violet: #9d7bff;
+    --glow-c: 0 0 18px rgba(60, 240, 255, .35); --glow-m: 0 0 18px rgba(255, 47, 160, .35);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
-  a { color: var(--cyan); }
-  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
-  header { border: 2px solid var(--magenta); padding: 24px; position: relative; }
-  header::before { content: "◢◤ CRPTOCHAT"; position: absolute; top: -13px; left: 16px; background: var(--bg);
-                   padding: 0 8px; color: var(--yellow); font-weight: bold; letter-spacing: .1em; }
-  h1 { margin: 0 0 8px; font-size: clamp(22px, 5vw, 34px); color: var(--cyan); line-height: 1.2; }
-  h1 span { color: var(--magenta); }
-  h2 { color: var(--yellow); font-size: 18px; margin: 40px 0 12px; letter-spacing: .05em; }
-  h2::before { content: "▓▒░ "; color: var(--magenta); }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 64px; }
+  body { margin: 0; color: var(--text); font: 16px/1.65 var(--mono); background: var(--bg); overflow-x: hidden; }
+
+  /* fundo: grade em perspectiva + brilho, tudo CSS */
+  .bg { position: fixed; inset: 0; z-index: -2; pointer-events: none;
+        background: radial-gradient(1200px 600px at 80% -10%, rgba(255, 47, 160, .16), transparent 60%),
+                    radial-gradient(900px 500px at -10% 20%, rgba(60, 240, 255, .12), transparent 60%), var(--bg); }
+  .bg::after { content: ""; position: absolute; left: -50%; right: -50%; bottom: -20%; height: 70%;
+               background-image: linear-gradient(rgba(60, 240, 255, .12) 1px, transparent 1px),
+                                 linear-gradient(90deg, rgba(60, 240, 255, .12) 1px, transparent 1px);
+               background-size: 48px 48px; transform: perspective(500px) rotateX(62deg);
+               mask-image: linear-gradient(to top, #000 10%, transparent 85%);
+               -webkit-mask-image: linear-gradient(to top, #000 10%, transparent 85%);
+               animation: grid 14s linear infinite; }
+  @keyframes grid { to { background-position: 0 480px, 0 0; } }
+  .scan { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .25;
+          background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .35) 2px 3px); }
+
+  a { color: var(--cyan); text-underline-offset: 3px; }
+  a:hover { color: #fff; text-shadow: var(--glow-c); }
+  code { color: var(--yellow); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 80px; }
+
+  /* barra fixa */
+  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            background: rgba(7, 7, 15, .72); border-bottom: 1px solid var(--line); }
+  nav.top .in { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 18px; align-items: center; }
+  .brand { color: var(--yellow); font-weight: bold; letter-spacing: .12em; text-decoration: none; white-space: nowrap; }
+  .brand span { color: var(--magenta); }
+  nav.top ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
+  nav.top ul::-webkit-scrollbar { display: none; }
+  nav.top li a { display: block; padding: 4px 10px; color: var(--dim); text-decoration: none; font-size: 13px;
+                 border: 1px solid transparent; white-space: nowrap; }
+  nav.top li a.on, nav.top li a:hover { color: var(--cyan); border-color: var(--line); text-shadow: none; }
+  .progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0;
+              background: linear-gradient(90deg, var(--cyan), var(--magenta)); box-shadow: var(--glow-m); }
+
+  /* topo */
+  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 32px; align-items: center; padding: 56px 0 24px; }
+  .chip { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); padding: 2px 10px;
+          font-size: 12px; color: var(--green); background: rgba(61, 255, 138, .06); }
+  .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green);
+            animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  h1 { margin: 14px 0 12px; font-size: clamp(30px, 5vw, 46px); line-height: 1.05; letter-spacing: -.02em; }
+  h1 .a { color: var(--cyan); text-shadow: var(--glow-c); }
+  h1 .b { display: block; color: var(--magenta); text-shadow: var(--glow-m); position: relative; }
+  .glitch { position: relative; }
+  .glitch::before, .glitch::after { content: attr(data-t); position: absolute; inset: 0; pointer-events: none; }
+  .glitch::before { color: var(--cyan); clip-path: inset(0 0 60% 0); transform: translate(-2px); animation: g1 3.2s steps(1) infinite; }
+  .glitch::after { color: var(--yellow); clip-path: inset(55% 0 0 0); transform: translate(2px); animation: g2 2.7s steps(1) infinite; }
+  @keyframes g1 { 0%, 92%, 100% { opacity: 0; } 93%, 96% { opacity: .8; transform: translate(-3px, -1px); } }
+  @keyframes g2 { 0%, 88%, 100% { opacity: 0; } 89%, 91% { opacity: .7; transform: translate(3px, 1px); } }
+  .lead { color: #c9c9e2; max-width: 34em; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 12px 18px; font: inherit; font-weight: bold; cursor: pointer;
+         text-decoration: none; border: 1px solid var(--cyan); color: var(--bg); background: var(--cyan);
+         box-shadow: var(--glow-c); transition: transform .12s, box-shadow .12s; }
+  .btn:hover { transform: translateY(-2px); color: var(--bg); text-shadow: none; box-shadow: 0 0 28px rgba(60, 240, 255, .6); }
+  .btn.ghost { background: transparent; color: var(--cyan); box-shadow: none; }
+  .btn.ghost:hover { color: #fff; }
+  .btn small { font-weight: normal; opacity: .75; }
+
+  /* terminal de demonstração */
+  .term { border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel2), var(--panel)); box-shadow: 0 30px 80px rgba(0, 0, 0, .5), var(--glow-m);
+          font-size: 13.5px; position: relative; }
+  .term .bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .term .bar i:nth-child(1) { background: var(--magenta); } .term .bar i:nth-child(2) { background: var(--yellow); } .term .bar i:nth-child(3) { background: var(--green); }
+  .term .bar span { margin-left: 8px; color: var(--dim); font-size: 12px; }
+  .term .bar button { margin-left: auto; }
+  .term .body { padding: 14px 14px 10px; min-height: 274px; }
+  .term .ln { display: grid; grid-template-columns: 44px 72px 1fr; gap: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
+              animation: in .25s ease-out; }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } }
+  .term .t { color: var(--dim); } .term .n { text-align: right; font-weight: bold; }
+  .term .sys { color: var(--violet); grid-column: 2 / 4; }
+  .term .x { color: var(--text); } .term.server .x { color: var(--green); }
+  .term .meta { color: var(--dim); font-size: 12px; border-top: 1px dashed var(--line); padding: 6px 14px; display: flex; justify-content: space-between; gap: 8px; }
+  .toggle { font: inherit; font-size: 12px; color: var(--cyan); background: transparent; border: 1px solid var(--line); padding: 2px 10px; cursor: pointer; }
+  .toggle[aria-pressed="true"] { color: var(--bg); background: var(--green); border-color: var(--green); }
+
+  /* seções */
+  section { margin-top: 72px; }
+  h2 { font-size: clamp(20px, 3vw, 26px); margin: 0 0 6px; letter-spacing: .02em; display: flex; gap: 12px; align-items: baseline; }
+  h2 .k { color: var(--magenta); font-size: 14px; border: 1px solid var(--magenta); padding: 0 8px; }
+  h2 .w { color: var(--yellow); }
+  .sub { color: var(--dim); margin: 0 0 20px; }
   p { margin: 8px 0; }
   .dim { color: var(--dim); }
-  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding: 0; list-style: none; }
-  .tags li { border: 1px solid var(--line); padding: 2px 10px; color: var(--green); font-size: 14px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-  .dl { display: block; border: 1px solid var(--line); background: var(--panel); padding: 16px; text-decoration: none;
-        color: var(--text); transition: border-color .15s; }
-  .dl:hover, .dl:focus-visible { border-color: var(--cyan); outline: none; }
-  .dl.mine { border-color: var(--magenta); box-shadow: 0 0 0 1px var(--magenta) inset; }
-  .dl b { color: var(--cyan); display: block; font-size: 17px; }
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s, transform .6s; }
+  .reveal.seen { opacity: 1; transform: none; }
+
+  /* downloads */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .dl { position: relative; display: block; padding: 18px; text-decoration: none; color: var(--text); background: var(--panel);
+        border: 1px solid var(--line); overflow: hidden; transition: transform .15s, border-color .15s; }
+  .dl::before { content: ""; position: absolute; inset: 0; opacity: 0; transition: opacity .2s;
+                background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(60, 240, 255, .18), transparent 60%); }
+  .dl:hover, .dl:focus-visible { transform: translateY(-3px); border-color: var(--cyan); outline: none; color: var(--text); text-shadow: none; }
+  .dl:hover::before, .dl:focus-visible::before { opacity: 1; }
+  .dl .os { font-size: 26px; line-height: 1; color: var(--cyan); }
+  .dl b { display: block; font-size: 17px; margin-top: 10px; }
   .dl small { color: var(--dim); display: block; overflow-wrap: anywhere; }
-  .dl .badge { display: none; color: var(--magenta); font-size: 13px; }
+  .dl .go { position: absolute; right: 14px; top: 16px; color: var(--dim); transition: transform .15s, color .15s; }
+  .dl:hover .go { transform: translateY(3px); color: var(--cyan); }
+  .dl .badge { display: none; margin-top: 10px; font-size: 12px; color: var(--bg); background: var(--magenta); padding: 1px 8px; width: max-content; }
+  .dl.mine { border-color: var(--magenta); box-shadow: var(--glow-m); }
   .dl.mine .badge { display: block; }
-  .box { background: var(--panel); border-left: 3px solid var(--cyan); padding: 12px 16px; margin: 12px 0; }
-  .warn { border-left-color: var(--orange); }
-  .warn strong { color: var(--orange); }
-  pre { position: relative; background: #07070d; border: 1px solid var(--line); padding: 14px 16px; margin: 10px 0;
-        overflow-x: auto; white-space: pre; font-size: 14px; line-height: 1.5; }
+
+  pre { position: relative; background: #05050b; border: 1px solid var(--line); padding: 16px 18px; margin: 12px 0;
+        overflow-x: auto; white-space: pre; font-size: 13.5px; line-height: 1.55; }
+  pre::before { content: "$"; position: absolute; left: 6px; top: 16px; color: var(--magenta); opacity: .6; font-size: 12px; }
   pre code { color: var(--text); }
   .c { color: var(--dim); }
-  .copy { position: absolute; top: 6px; right: 6px; background: var(--panel); color: var(--cyan); border: 1px solid var(--line);
-          font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+  .copy { position: absolute; top: 8px; right: 8px; background: var(--panel2); color: var(--cyan); border: 1px solid var(--line);
+          font: inherit; font-size: 12px; padding: 2px 10px; cursor: pointer; }
   .copy:hover { border-color: var(--cyan); }
+  .copy.ok { color: var(--bg); background: var(--green); border-color: var(--green); }
+
+  .box { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cyan); padding: 14px 18px; margin: 14px 0; }
+  .warn { border-left-color: var(--orange); }
+  .warn strong { color: var(--orange); }
   .fp { color: var(--green); overflow-wrap: anywhere; word-break: break-all; }
-  ol, ul { padding-left: 22px; }
-  li { margin: 4px 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
+  ol, ul { padding-left: 22px; } li { margin: 5px 0; }
+
+  /* abas */
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .tabs button { font: inherit; font-size: 14px; color: var(--dim); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { color: var(--bg); background: var(--cyan); border-color: var(--cyan); box-shadow: var(--glow-c); }
+  .pane { border: 1px solid var(--line); border-top: 2px solid var(--cyan); padding: 4px 18px 12px; background: rgba(17, 17, 31, .7); }
+  .pane[hidden] { display: none; }
+
+  /* passos */
+  .steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 12px; }
+  .steps > li { counter-increment: s; position: relative; padding: 12px 16px 12px 58px; background: var(--panel); border: 1px solid var(--line); }
+  .steps > li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 14px; top: 12px; color: var(--magenta); font-weight: bold; }
+
+  /* novidades */
+  .feat { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); padding: 18px; position: relative; transition: border-color .2s, transform .2s; }
+  .card:hover { border-color: var(--violet); transform: translateY(-2px); }
+  .card .v { position: absolute; top: 14px; right: 14px; font-size: 11px; color: var(--violet); border: 1px solid var(--violet); padding: 0 6px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; color: var(--cyan); padding-right: 54px; }
+  .card p { color: #c4c4dd; font-size: 14px; }
+  .card details { margin-top: 8px; font-size: 13.5px; }
+  .card summary { cursor: pointer; color: var(--yellow); list-style: none; }
+  .card summary::-webkit-details-marker { display: none; }
+  .card summary::before { content: "+ "; color: var(--magenta); }
+  .card details[open] summary::before { content: "− "; }
+  .card details p { color: var(--dim); }
+  .k2 { color: var(--green); }
+
+  /* laboratório */
+  .lab { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .lab textarea { width: 100%; min-height: 118px; resize: vertical; background: #05050b; color: var(--text); border: 1px solid var(--line);
+                  font: inherit; font-size: 14px; padding: 12px; }
+  .lab textarea:focus { outline: none; border-color: var(--cyan); box-shadow: var(--glow-c); }
+  .meter { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 10px 0 4px; }
+  .meter span { height: 10px; background: var(--line); transition: background .2s, box-shadow .2s; }
+  .meter span.on { background: var(--magenta); box-shadow: var(--glow-m); }
+  .meter + .scale { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; font-size: 10px; color: var(--dim); text-align: center; }
+  .hex { font-size: 11.5px; line-height: 1.5; color: var(--green); background: #05050b; border: 1px solid var(--line); padding: 10px; height: 150px;
+         overflow: hidden; word-break: break-all; position: relative; }
+  .hex::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, #05050b); }
+  .stat { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; border-bottom: 1px dashed var(--line); padding: 4px 0; }
+  .stat b { color: var(--cyan); }
+
+  /* tabela de comandos */
+  .search { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); font: inherit; padding: 10px 14px; }
+  .search:focus { outline: none; border-color: var(--cyan); box-shadow: var(--glow-c); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+  td { border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
   td:first-child { color: var(--cyan); white-space: nowrap; }
-  footer { margin-top: 48px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
-  @media (max-width: 520px) { td:first-child { white-space: normal; } }
+  tr.new td:first-child::after { content: " novo"; color: var(--bg); background: var(--violet); font-size: 10px; padding: 0 4px; margin-left: 6px; vertical-align: 2px; }
+  tr[hidden] { display: none; }
+  .none { color: var(--dim); padding: 8px; }
+
+  footer { margin-top: 72px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+
+  @media (max-width: 820px) { .hero, .lab { grid-template-columns: 1fr; } .hero { padding-top: 32px; } }
+  @media (max-width: 520px) { td:first-child { white-space: normal; } .term { font-size: 12px; } .term .ln { grid-template-columns: 42px 56px 1fr; gap: 6px; } .term .bar span { font-size: 11px; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    html { scroll-behavior: auto; } .reveal { opacity: 1; transform: none; }
+  }
 </style>
 </head>
 <body>
+<div class="bg" aria-hidden="true"></div><div class="scan" aria-hidden="true"></div>
+
+<nav class="top" aria-label="Seções">
+  <div class="in">
+    <a class="brand" href="#topo">◢◤ CRPTO<span>CHAT</span></a>
+    <ul>
+      <li><a href="#baixar">baixar</a></li>
+      <li><a href="#verificar">verificar</a></li>
+      <li><a href="#conectar">conectar</a></li>
+      <li><a href="#novidades">novidades</a></li>
+      <li><a href="#laboratorio">o que o servidor vê</a></li>
+      <li><a href="#comandos">comandos</a></li>
+      <li><a href="#codigo">código</a></li>
+    </ul>
+  </div>
+  <div class="progress" id="progress"></div>
+</nav>
+
 <div class="wrap">
 
-<header>
-  <h1>chat no terminal, <span>cifrado ponta a ponta</span></h1>
-  <p>O servidor só repassa blobs cifrados: não lê as conversas e, por padrão, não guarda histórico.
-     Canais abertos e privados, mensagens diretas com sigilo por sessão, voz e arquivos.</p>
-  <ul class="tags">
-    <li>E2EE</li><li>Ed25519 · X25519 · ChaCha20-Poly1305</li><li>nicks presos à chave</li><li>acesso anônimo</li>
-    <li>código aberto · MIT</li>
-  </ul>
+<header class="hero" id="topo">
+  <div>
+    <span class="chip"><i></i>v1.16 · Double Ratchet · pós-quântico · offline</span>
+    <h1><span class="a">chat no terminal,</span><span class="b glitch" data-t="cifrado ponta a ponta">cifrado ponta a ponta</span></h1>
+    <p class="lead">O servidor só repassa blobs cifrados: não lê as conversas e, por padrão, não guarda histórico.
+       Canais abertos e privados, mensagens diretas com Double Ratchet e camada pós-quântica, recados para quem
+       está offline, voz e arquivos.</p>
+    <div class="cta">
+      <a class="btn" id="cta" href="#baixar">▼ baixar o cliente <small id="cta-os"></small></a>
+      <a class="btn ghost" href="#verificar">⛨ conferir a assinatura</a>
+    </div>
+  </div>
+
+  <div class="term" id="term" aria-label="Demonstração: a mesma conversa vista por você e pelo servidor">
+    <div class="bar"><i></i><i></i><i></i><span id="term-title">@trinity · você vê</span>
+      <button class="toggle" id="term-toggle" type="button" aria-pressed="false">ver como o servidor vê</button></div>
+    <div class="body" id="term-body" aria-live="off"></div>
+    <div class="meta"><span id="term-meta">texto em claro só nos dois clientes</span><span>demonstração</span></div>
+  </div>
 </header>
 
-<h2>1. baixe o cliente</h2>
-<div class="grid" id="downloads">
-  <a class="dl" data-os="linux-amd64" href="crptochat-linux-amd64" download>
-    <span class="badge">▶ recomendado para você</span><b>Linux x86_64</b><small>crptochat-linux-amd64</small></a>
-  <a class="dl" data-os="linux-arm64" href="crptochat-linux-arm64" download>
-    <span class="badge">▶ recomendado para você</span><b>Linux ARM64</b><small>crptochat-linux-arm64 · Raspberry Pi 4/5</small></a>
-  <a class="dl" data-os="macos" href="crptochat-macos-arm64" download>
-    <span class="badge">▶ recomendado para você</span><b>macOS (Apple Silicon)</b><small>crptochat-macos-arm64</small></a>
-  <a class="dl" data-os="windows" href="crptochat-windows-amd64.exe" download>
-    <span class="badge">▶ recomendado para você</span><b>Windows x64</b><small>crptochat-windows-amd64.exe</small></a>
-</div>
-<p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256, assinado),
-   <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519), <a href="SHA256SUMS" download>SHA256SUMS</a>
-   e <a href="install.sh" download>install.sh</a>. Não precisa de conta nem de login para baixar.</p>
-<p><b>Linux e macOS, num comando</b> (o instalador confere a assinatura e o hash antes de instalar):</p>
+<section id="baixar" class="reveal">
+  <h2><span class="k">01</span><span class="w">baixe o cliente</span></h2>
+  <p class="sub">Um binário só, sem instalar nada. Não precisa de conta nem de login para baixar.</p>
+  <div class="grid" id="downloads">
+    <a class="dl" data-os="linux-amd64" href="crptochat-linux-amd64" download>
+      <span class="os">🐧</span><span class="go">↓</span><b>Linux x86_64</b><small>crptochat-linux-amd64</small>
+      <span class="badge">▶ recomendado para você</span></a>
+    <a class="dl" data-os="linux-arm64" href="crptochat-linux-arm64" download>
+      <span class="os">🍓</span><span class="go">↓</span><b>Linux ARM64</b><small>crptochat-linux-arm64 · Raspberry Pi 4/5</small>
+      <span class="badge">▶ recomendado para você</span></a>
+    <a class="dl" data-os="macos" href="crptochat-macos-arm64" download>
+      <span class="os">⌘</span><span class="go">↓</span><b>macOS (Apple Silicon)</b><small>crptochat-macos-arm64</small>
+      <span class="badge">▶ recomendado para você</span></a>
+    <a class="dl" data-os="windows" href="crptochat-windows-amd64.exe" download>
+      <span class="os">⊞</span><span class="go">↓</span><b>Windows x64</b><small>crptochat-windows-amd64.exe</small>
+      <span class="badge">▶ recomendado para você</span></a>
+  </div>
+  <p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256, assinado),
+     <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519), <a href="SHA256SUMS" download>SHA256SUMS</a>
+     e <a href="install.sh" download>install.sh</a>.</p>
+  <p><b>Linux e macOS, num comando</b> (o instalador confere a assinatura e o hash antes de instalar):</p>
 <pre><code>curl -fsSLO --proto '=https' https://crptochat.acpt.app.br/downloads/install.sh &amp;&amp; sh install.sh</code></pre>
+</section>
 
-<h2>2. verifique o que você baixa</h2>
-<p>Um chat cifrado só vale se o binário for o original. Toda release é <b>assinada com Ed25519</b>: o manifesto
-   <code>RELEASE</code> traz a versão e o SHA-256 de cada binário, e o <code>RELEASE.sig</code> é a assinatura dele.
-   Esta é a chave de assinatura das releases:</p>
-<div class="box">
-  <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 aae1 82c8 5665 f874 fab6 a97e 93c5 333b aae8 ce15 7090 f247 c9e7 e2e6 f9d2 3890</span></p>
-  <p><span class="dim">chave pública:</span><br><span class="fp">UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=</span></p>
-  <p class="dim">Confira a mesma fingerprint por outro canal: no README do
-     <a href="https://github.com/hacking-table/crptochat-oss">repositório do código</a> ou com quem te passou o link.
-     Se alguém trocasse esta página, trocaria a chave também.</p>
-</div>
-<ul>
-  <li>O <code>install.sh</code> confere a assinatura do <code>RELEASE</code> com essa chave e o SHA-256 do binário
-      contra o manifesto assinado; qualquer divergência cancela a instalação.</li>
-  <li>Os mesmos arquivos ficam espelhados nas releases públicas em
-      <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>.
-      Baixar dos dois lugares e comparar é uma conferência a mais: quem quisesse enganar você teria de alterar os dois.</li>
-</ul>
+<section id="verificar" class="reveal">
+  <h2><span class="k">02</span><span class="w">verifique o que você baixa</span></h2>
+  <p class="sub">Um chat cifrado só vale se o binário for o original.</p>
+  <p>Toda release é <b>assinada com Ed25519</b>: o manifesto <code>RELEASE</code> traz a versão e o SHA-256 de cada
+     binário, e o <code>RELEASE.sig</code> é a assinatura dele. Esta é a chave de assinatura das releases:</p>
+  <div class="box">
+    <p><span class="dim">fingerprint:</span><br><span class="fp">SHA256 aae1 82c8 5665 f874 fab6 a97e 93c5 333b aae8 ce15 7090 f247 c9e7 e2e6 f9d2 3890</span></p>
+    <p><span class="dim">chave pública:</span><br><span class="fp">UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=</span></p>
+    <p class="dim">Confira a mesma fingerprint por outro canal: no README do
+       <a href="https://github.com/hacking-table/crptochat-oss">repositório do código</a> ou com quem te passou o link.
+       Se alguém trocasse esta página, trocaria a chave também.</p>
+  </div>
+  <ul>
+    <li>O <code>install.sh</code> confere a assinatura do <code>RELEASE</code> com essa chave e o SHA-256 do binário
+        contra o manifesto assinado; qualquer divergência cancela a instalação.</li>
+    <li>Os mesmos arquivos ficam espelhados nas releases públicas em
+        <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>.
+        Baixar dos dois lugares e comparar é uma conferência a mais: quem quisesse enganar você teria de alterar os dois.</li>
+  </ul>
 
-<p><b>Conferência rápida do hash</b>, com o <code>SHA256SUMS</code> na mesma pasta do binário:</p>
+  <p><b>Conferência rápida do hash</b>, com o <code>SHA256SUMS</code> na mesma pasta do binário:</p>
 <pre><code>sha256sum -c --ignore-missing SHA256SUMS          <span class="c"># Linux; no macOS: shasum -a 256 -c --ignore-missing SHA256SUMS</span>
 <span class="c"># deve dizer: crptochat-linux-amd64: OK</span></code></pre>
-<p class="dim">O <code>SHA256SUMS</code> não é assinado: ele prova que o download não corrompeu, não quem publicou.
-   Para isso, confira o <code>SHA256SUMS</code> do site com o do espelho no GitHub, ou faça a conferência completa
-   abaixo, que usa o <code>RELEASE</code> assinado.</p>
+  <p class="dim">O <code>SHA256SUMS</code> não é assinado: ele prova que o download não corrompeu, não quem publicou.
+     Para isso, confira o <code>SHA256SUMS</code> do site com o do espelho no GitHub, ou faça a conferência completa
+     abaixo, que usa o <code>RELEASE</code> assinado.</p>
 
-<p><b>Conferência completa</b> (assinatura + hash):</p>
-<p><b>Linux</b> (troque o nome do arquivo se for ARM64):</p>
+  <p><b>Conferência completa</b> (assinatura + hash), no seu sistema:</p>
+  <div class="tabs" role="tablist" aria-label="Sistema">
+    <button role="tab" id="tab-linux" aria-controls="pane-linux" aria-selected="true" data-os="linux">🐧 Linux</button>
+    <button role="tab" id="tab-macos" aria-controls="pane-macos" aria-selected="false" data-os="macos">⌘ macOS</button>
+    <button role="tab" id="tab-windows" aria-controls="pane-windows" aria-selected="false" data-os="windows">⊞ Windows</button>
+  </div>
+  <div class="pane" role="tabpanel" id="pane-linux" aria-labelledby="tab-linux">
+    <p>Troque o nome do arquivo se for ARM64:</p>
 <pre><code><span class="c"># 1) assinatura do manifesto (OpenSSL 3)</span>
 printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAUXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=\n-----END PUBLIC KEY-----\n' &gt; crptochat.pub
 openssl base64 -d -A -in RELEASE.sig -out RELEASE.sig.bin
@@ -127,111 +316,366 @@ grep ' crptochat-linux-amd64$' RELEASE | sha256sum -c -
 <span class="c"># deve dizer: crptochat-linux-amd64: OK</span>
 
 chmod +x crptochat-linux-amd64</code></pre>
-
-<p><b>macOS:</b> o <code>openssl</code> do sistema (LibreSSL) não confere Ed25519. Use o do Homebrew
-   (<code>brew install openssl@3</code>), trocando <code>openssl</code> por
-   <code>$(brew --prefix openssl@3)/bin/openssl</code> nos comandos acima. Para o hash:</p>
+  </div>
+  <div class="pane" role="tabpanel" id="pane-macos" aria-labelledby="tab-macos" hidden>
+    <p>O <code>openssl</code> do sistema (LibreSSL) não confere Ed25519. Use o do Homebrew
+       (<code>brew install openssl@3</code>), trocando <code>openssl</code> por
+       <code>$(brew --prefix openssl@3)/bin/openssl</code> nos comandos de Linux para a assinatura. Para o hash:</p>
 <pre><code>grep ' crptochat-macos-arm64$' RELEASE | shasum -a 256 -c -
 chmod +x crptochat-macos-arm64
 xattr -d com.apple.quarantine crptochat-macos-arm64   <span class="c"># o binário não é assinado pela Apple</span></code></pre>
-
-<p><b>Windows</b> (PowerShell):</p>
+  </div>
+  <div class="pane" role="tabpanel" id="pane-windows" aria-labelledby="tab-windows" hidden>
+    <p>No PowerShell:</p>
 <pre><code>$esperado = (Select-String -Path RELEASE -Pattern ' crptochat-windows-amd64\.exe$').Line.Split(' ')[0]
 $atual = (Get-FileHash crptochat-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
 if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code></pre>
-<p class="dim">A assinatura do <code>RELEASE</code> no Windows: rode os comandos de Linux no Git Bash, que já traz o OpenSSL 3.</p>
+    <p class="dim">A assinatura do <code>RELEASE</code> no Windows: rode os comandos de Linux no Git Bash, que já traz o OpenSSL 3.</p>
+  </div>
 
-<div class="box warn"><strong>Se qualquer conferência falhar, não execute o arquivo</strong> e avise no grupo.</div>
+  <div class="box warn"><strong>Se qualquer conferência falhar, não execute o arquivo</strong> e avise no grupo.</div>
+</section>
 
-<h2>3. conecte</h2>
+<section id="conectar" class="reveal">
+  <h2><span class="k">03</span><span class="w">conecte</span></h2>
+  <p class="sub">O <code>--pin</code> amarra o cliente a este servidor desde a primeira conexão.</p>
 <pre><code>./crptochat-linux-amd64 crptochat.acpt.app.br --pin __PIN__</code></pre>
-<p>No Windows: <code>.\crptochat-windows-amd64.exe crptochat.acpt.app.br --pin __PIN__</code></p>
-<div class="box">
-  <p><span class="dim">fingerprint do certificado do servidor (o <code>--pin</code>):</span><br><span class="fp">__PIN__</span></p>
-  <p class="dim">Com o <code>--pin</code>, o cliente recusa qualquer servidor que não seja este, já na primeira conexão.</p>
-</div>
-<ul>
-  <li>Na primeira vez, escolha um <b>nick</b> e uma <b>senha</b>. A senha protege a sua chave neste computador e
-      nunca vai ao servidor. O nick fica preso à sua chave: <b>sem a chave, ninguém (nem você) recupera o nick</b>.</li>
-  <li>Sem cadastro: <code>crptochat crptochat.acpt.app.br -a</code> entra como anônimo, com um nick descartável.</li>
-  <li><code>Esc</code> abre o menu com tudo. Para começar: <code>/join #lobby</code>.</li>
-</ul>
+  <p>No Windows: <code>.\crptochat-windows-amd64.exe crptochat.acpt.app.br --pin __PIN__</code></p>
+  <div class="box">
+    <p><span class="dim">fingerprint do certificado do servidor (o <code>--pin</code>):</span><br><span class="fp">__PIN__</span></p>
+    <p class="dim">Com o <code>--pin</code>, o cliente recusa qualquer servidor que não seja este, já na primeira conexão.</p>
+  </div>
+  <ol class="steps">
+    <li>Na primeira vez, escolha um <b>nick</b> e uma <b>senha</b>. A senha protege a sua chave neste computador e
+        nunca vai ao servidor. O nick fica preso à sua chave: <b>sem a chave, ninguém (nem você) recupera o nick</b>.</li>
+    <li>Sem cadastro: <code>crptochat crptochat.acpt.app.br -a</code> entra como anônimo, com um nick descartável
+        (anônimos não recebem mensagens offline).</li>
+    <li><code>Esc</code> abre o menu com tudo. Para começar: <code>/join #lobby</code>.</li>
+    <li>Com quem importa, confira o número de segurança: <code>/whois nick</code> e depois <code>/verify nick</code>.</li>
+  </ol>
 
-<h2>atualizações</h2>
-<p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b> e só instala uma release
-   <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
-   reinstala a mesma). Antes de trocar o binário, confere o SHA-256 dele contra o manifesto assinado.
-   Não precisa de conta nem de login.</p>
-<div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
-   e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.</div>
+  <h2 style="margin-top:40px"><span class="k">↻</span><span class="w">atualizações</span></h2>
+  <p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b> e só instala uma release
+     <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
+     reinstala a mesma). Antes de trocar o binário, confere o SHA-256 dele contra o manifesto assinado.
+     Não precisa de conta nem de login.</p>
+  <div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
+     e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.</div>
+</section>
 
-<h2>4. confira quem é quem</h2>
-<p>O servidor não é confiável por projeto: ele não lê nada, mas poderia tentar se passar por alguém.
-   Por isso, com quem importa:</p>
-<table>
-  <tr><td>/whois nick</td><td>mostra a fingerprint e o número de segurança entre vocês dois</td></tr>
-  <tr><td>/verify nick</td><td>compare o número por outro meio (pessoalmente, ligação) e marque ✓</td></tr>
-  <tr><td>⚠ chave mudou</td><td>as mensagens diretas ficam bloqueadas até vocês conferirem de novo</td></tr>
-</table>
+<section id="novidades" class="reveal">
+  <h2><span class="k">★</span><span class="w">novidades até a 1.16</span></h2>
+  <p class="sub">Tudo negociado com quem está do outro lado: clientes antigos continuam conversando normalmente.</p>
+  <div class="feat">
+    <article class="card"><span class="v">1.12</span>
+      <h3>Double Ratchet nas diretas</h3>
+      <p>Chave X25519 nova a cada troca de vez. Quem copiar o estado do seu cliente perde o acesso assim que vocês se respondem.</p>
+      <details><summary>como funciona</summary>
+        <p>A raiz absorve <span class="k2">DH(chave nova, última do outro)</span> a cada vez; dentro dela, uma
+           chave por mensagem por HMAC. Mensagens fora de ordem abrem, repetidas são recusadas.</p></details></article>
+    <article class="card"><span class="v">1.13</span>
+      <h3>Recado para quem está offline</h3>
+      <p>Mande a mensagem mesmo com a pessoa desconectada: ela fica guardada cifrada e chega quando ela voltar (até 14 dias).</p>
+      <details><summary>como funciona</summary>
+        <p>No estilo X3DH: prekeys assinadas e de uso único. O servidor guarda só destinatário, horário e bytes
+           opacos; quem escreveu vai dentro do envelope, assinado.</p></details></article>
+    <article class="card"><span class="v">1.14</span>
+      <h3>Camada pós-quântica</h3>
+      <p>ML-KEM-768 misturado ao X25519: gravar o tráfego hoje para quebrar com computador quântico amanhã não funciona.</p>
+      <details><summary>como funciona</summary>
+        <p>Como o PQXDH do Signal: <span class="k2">HKDF(DH ‖ ss_ML-KEM)</span> no ratchet e na caixa postal. Se o
+           servidor tentar tirar a chave pós-quântica de quem já tinha, o cliente percebe e não envia.</p></details></article>
+    <article class="card"><span class="v">1.15</span>
+      <h3>Tamanho escondido</h3>
+      <p>Um "ok" e uma frase curta saem com o mesmo tamanho cifrado. Teste no laboratório abaixo.</p>
+      <details><summary>como funciona</summary>
+        <p>Até 4 KiB, o conteúdo é completado até a próxima potência de 2 (64, 128, 256 … 4096 bytes); acima
+           disso, de 64 em 64.</p></details></article>
+    <article class="card"><span class="v">1.11</span>
+      <h3>Convite com a chave do canal</h3>
+      <p><code>/create #canal privado gerar</code> sorteia uma senha de 128 bits; <code>/invite nick</code> leva a chave cifrada de ponta a ponta.</p>
+      <details><summary>como funciona</summary>
+        <p>Vão as chaves derivadas do canal, nunca a senha. Quem é convidado entra com <code>/join #canal</code>,
+           sem digitar nada, inclusive se estava offline.</p></details></article>
+    <article class="card"><span class="v">1.16</span>
+      <h3>Responder, reagir, editar</h3>
+      <p><code>/reply</code>, <code>/react 👍</code>, <code>/edit</code>, <code>/del</code> e confirmação de leitura opcional.</p>
+      <details><summary>como funciona</summary>
+        <p>Tudo dentro das mensagens cifradas. A confirmação de leitura (<code>/receipts on</code>) vem desligada
+           e só vale se os dois ligarem. Apagar é um pedido: quem já leu, leu.</p></details></article>
+  </div>
+</section>
 
-<h2>comandos úteis</h2>
-<table>
-  <tr><td>/msg nick texto</td><td>mensagem direta cifrada</td></tr>
-  <tr><td>/create #canal privado</td><td>canal protegido por senha (a senha nunca vai ao servidor)</td></tr>
-  <tr><td>/send nick arquivo</td><td>arquivo cifrado de ponta a ponta</td></tr>
-  <tr><td>/rec · F2</td><td>mensagem de voz, com disfarce de voz por padrão</td></tr>
-  <tr><td>/ttl nick 10m</td><td>mensagens diretas que somem</td></tr>
-  <tr><td>/search texto · Ctrl+F</td><td>busca no que está na tela (só local)</td></tr>
-  <tr><td>/update</td><td>atualiza pelo site, conferindo assinatura e SHA-256</td></tr>
-  <tr><td>/help</td><td>todo o resto</td></tr>
-</table>
+<section id="laboratorio" class="reveal">
+  <h2><span class="k">⚗</span><span class="w">o que o servidor vê</span></h2>
+  <p class="sub">Digite uma mensagem. Tudo é calculado aqui no navegador; nada sai desta página.</p>
+  <div class="lab">
+    <div>
+      <label for="lab-in" class="dim">sua mensagem</label>
+      <textarea id="lab-in" spellcheck="false">chego em 10 min</textarea>
+      <div class="meter" id="meter" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="scale" aria-hidden="true"><span>64</span><span>128</span><span>256</span><span>512</span><span>1K</span><span>2K</span><span>4K</span></div>
+      <div style="margin-top:12px">
+        <div class="stat"><span>seu texto</span><b id="lab-len">0 bytes</b></div>
+        <div class="stat"><span>depois do preenchimento</span><b id="lab-pad">64 bytes</b></div>
+        <div class="stat"><span>mensagens que saem do mesmo tamanho</span><b id="lab-same">de 0 a 63 bytes</b></div>
+      </div>
+    </div>
+    <div>
+      <span class="dim">o que passa pelo servidor (bytes aleatórios, como o cifrado parece):</span>
+      <div class="hex" id="lab-hex" aria-label="Exemplo de bytes cifrados"></div>
+      <div class="stat"><span>ele sabe</span><b>quem, para quem, quando, a faixa de tamanho</b></div>
+      <div class="stat"><span>ele não sabe</span><b class="k2">o conteúdo, nem o tamanho exato</b></div>
+    </div>
+  </div>
+</section>
 
-<h2>código aberto</h2>
-<p>O crptochat é software livre, sob a <b>licença MIT</b>. Todo o código (cliente, servidor e este instalador)
-   está em <a href="https://github.com/hacking-table/crptochat-oss">github.com/hacking-table/crptochat-oss</a>:
-   dá para ler, auditar, compilar você mesmo e rodar o seu próprio servidor.</p>
-<p>Quer melhorar algo? Faça um fork e mande um pull request. Antes, leia o
-   <a href="https://github.com/hacking-table/crptochat-oss/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
-   (como rodar os testes e o que é esperado de um PR).</p>
+<section id="comandos" class="reveal">
+  <h2><span class="k">&gt;_</span><span class="w">comandos úteis</span></h2>
+  <input class="search" id="cmd-q" type="search" placeholder="filtrar: arquivo, voz, offline, reação…" aria-label="Filtrar comandos" autocomplete="off">
+  <table id="cmds">
+    <tr><td>/msg nick texto</td><td>mensagem direta cifrada; se a pessoa estiver offline, fica guardada para ela</td></tr>
+    <tr><td>/whois nick</td><td>mostra a fingerprint e o número de segurança entre vocês dois</td></tr>
+    <tr><td>/verify nick</td><td>compare o número por outro meio (pessoalmente, ligação) e marque ✓</td></tr>
+    <tr><td>⚠ chave mudou</td><td>as mensagens diretas ficam bloqueadas até vocês conferirem de novo</td></tr>
+    <tr><td>/create #canal privado</td><td>canal protegido por senha (a senha nunca vai ao servidor)</td></tr>
+    <tr class="new"><td>/create #canal privado gerar</td><td>idem, com senha aleatória de 128 bits</td></tr>
+    <tr class="new"><td>/invite nick</td><td>convida; em canal privado a chave vai junto, cifrada (até para quem está offline)</td></tr>
+    <tr class="new"><td>/reply [nick] texto</td><td>responde à última mensagem, citando um trecho</td></tr>
+    <tr class="new"><td>/react [nick] 👍</td><td>reação; <code>+1</code>, <code>ok</code>, <code>kkk</code>, <code>&lt;3</code>, <code>fogo</code> viram emoji</td></tr>
+    <tr class="new"><td>/edit texto · /del</td><td>corrige ou apaga a sua última mensagem</td></tr>
+    <tr class="new"><td>/receipts on|off</td><td>confirmação de leitura nas diretas (desligada por padrão)</td></tr>
+    <tr><td>/send nick arquivo</td><td>arquivo cifrado de ponta a ponta</td></tr>
+    <tr><td>/rec · F2</td><td>mensagem de voz, com disfarce de voz por padrão</td></tr>
+    <tr class="new"><td>/voicemask on|off</td><td>liga ou desliga o disfarce de voz</td></tr>
+    <tr><td>/ttl nick 10m</td><td>mensagens diretas que somem</td></tr>
+    <tr><td>/search texto · Ctrl+F</td><td>busca no que está na tela (só local)</td></tr>
+    <tr><td>/update</td><td>atualiza pelo site, conferindo assinatura e SHA-256</td></tr>
+    <tr><td>/help</td><td>todo o resto</td></tr>
+  </table>
+  <p class="none" id="cmd-none" hidden>nenhum comando com isso; tente <code>/help</code> no chat.</p>
+</section>
 
-<h2>segurança</h2>
-<p>Achou uma vulnerabilidade? <b>Reporte em privado</b>, pelo
-   <a href="https://github.com/hacking-table/crptochat-oss/security/advisories/new">Private Vulnerability Reporting</a>
-   do GitHub. Os detalhes (o que entra no escopo, prazos e como acompanhamos) estão no
-   <a href="https://github.com/hacking-table/crptochat-oss/blob/main/SECURITY.md">SECURITY.md</a>.</p>
-<div class="box warn"><strong>Por favor, não abra issue pública com vulnerabilidade.</strong> Uma issue aberta
-   expõe o problema a todo mundo antes de existir correção.</div>
+<section id="codigo" class="reveal">
+  <h2><span class="k">{ }</span><span class="w">código aberto</span></h2>
+  <p>O crptochat é software livre, sob a <b>licença MIT</b>. Todo o código (cliente, servidor e este instalador)
+     está em <a href="https://github.com/hacking-table/crptochat-oss">github.com/hacking-table/crptochat-oss</a>:
+     dá para ler, auditar, compilar você mesmo e rodar o seu próprio servidor.</p>
+  <p>Quer melhorar algo? Faça um fork e mande um pull request. Antes, leia o
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
+     (como rodar os testes e o que é esperado de um PR).</p>
+
+  <h2 style="margin-top:40px"><span class="k">!</span><span class="w">segurança</span></h2>
+  <p>Achou uma vulnerabilidade? <b>Reporte em privado</b>, pelo
+     <a href="https://github.com/hacking-table/crptochat-oss/security/advisories/new">Private Vulnerability Reporting</a>
+     do GitHub. Os detalhes (o que entra no escopo, prazos e como acompanhamos) estão no
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+  <div class="box warn"><strong>Por favor, não abra issue pública com vulnerabilidade.</strong> Uma issue aberta
+     expõe o problema a todo mundo antes de existir correção.</div>
+</section>
 
 <footer>
-  <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e o tamanho aproximado
-     das mensagens). Print de tela e cliente adulterado não têm como ser impedidos. O código ainda não passou por
-     auditoria independente, mas é aberto: revise e reporte o que encontrar.</p>
+  <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e a faixa de tamanho
+     das mensagens) e, enquanto um recado offline espera, que alguém deixou algo para aquele nick. Print de tela e
+     cliente adulterado não têm como ser impedidos. O código ainda não passou por auditoria independente, mas é
+     aberto: revise e reporte o que encontrar.</p>
+  <p>Esta página não carrega nada de fora, não tem rastreamento nem analytics.</p>
 </footer>
 </div>
 
 <script>
-  // Destaca o download da plataforma de quem abriu a página (só uma dica: nada sai do navegador).
-  (function () {
-    var ua = navigator.userAgent || "", os = "";
-    if (/Windows/i.test(ua)) os = "windows";
-    else if (/Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = "macos";
-    else if (/Linux/i.test(ua) && !/Android/i.test(ua)) os = /aarch64|arm64/i.test(ua) ? "linux-arm64" : "linux-amd64";
-    var el = os && document.querySelector('.dl[data-os="' + os + '"]');
-    if (el) el.classList.add("mine");
+(function () {
+  "use strict";
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
-    // Botão "copiar" nos blocos de comando.
-    document.querySelectorAll("pre").forEach(function (pre) {
-      var b = document.createElement("button");
-      b.className = "copy"; b.type = "button"; b.textContent = "copiar";
-      b.addEventListener("click", function () {
-        var text = pre.querySelector("code").innerText;
-        (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
-          .then(function () { b.textContent = "copiado"; }, function () { b.textContent = "selecione e copie"; });
-        setTimeout(function () { b.textContent = "copiar"; }, 1500);
-      });
-      pre.appendChild(b);
+  // ---- plataforma de quem abriu a página (só uma dica: nada sai do navegador)
+  var ua = navigator.userAgent || "", os = "";
+  if (/Windows/i.test(ua)) os = "windows";
+  else if (/Mac OS X|Macintosh/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = "macos";
+  else if (/Linux/i.test(ua) && !/Android/i.test(ua)) os = /aarch64|arm64/i.test(ua) ? "linux-arm64" : "linux-amd64";
+  var mine = os && $('.dl[data-os="' + os + '"]');
+  if (mine) {
+    mine.classList.add("mine");
+    $("#cta").href = mine.getAttribute("href");
+    $("#cta").setAttribute("download", "");
+    $("#cta-os").textContent = "· " + $("b", mine).textContent;
+  }
+
+  // ---- brilho que segue o mouse nos cards de download
+  $$(".dl").forEach(function (el) {
+    el.addEventListener("pointermove", function (e) {
+      var r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", (e.clientX - r.left) + "px");
+      el.style.setProperty("--my", (e.clientY - r.top) + "px");
     });
-  })();
+  });
+
+  // ---- botão "copiar"
+  $$("pre").forEach(function (pre) {
+    var b = document.createElement("button");
+    b.className = "copy"; b.type = "button"; b.textContent = "copiar";
+    b.addEventListener("click", function () {
+      var text = $("code", pre).innerText;
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+        .then(function () { b.textContent = "copiado ✓"; b.classList.add("ok"); },
+              function () { b.textContent = "selecione e copie"; });
+      setTimeout(function () { b.textContent = "copiar"; b.classList.remove("ok"); }, 1600);
+    });
+    pre.appendChild(b);
+  });
+
+  // ---- abas de verificação (abre na do seu sistema)
+  var tabs = $$(".tabs button");
+  function pick(name) {
+    tabs.forEach(function (t) {
+      var on = t.dataset.os === name;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      $("#" + t.getAttribute("aria-controls")).hidden = !on;
+    });
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener("click", function () { pick(t.dataset.os); });
+    t.addEventListener("keydown", function (e) {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      var n = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      pick(n.dataset.os); n.focus();
+    });
+  });
+  if (os) pick(os.indexOf("linux") === 0 ? "linux" : os);
+
+  // ---- barra de progresso, seção ativa e aparecer ao rolar
+  var links = $$("nav.top li a"), bar = $("#progress");
+  function onScroll() {
+    var h = document.documentElement, max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + "%";
+    if (h.scrollTop < 120) links.forEach(function (a) { a.classList.remove("on"); });
+  }
+  window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+  if ("IntersectionObserver" in window) {
+    var seen = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("seen"); seen.unobserve(e.target); } });
+    }, { threshold: .08 });
+    $$(".reveal").forEach(function (s) { seen.observe(s); });
+    var active = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) { a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id); });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    $$("section[id]").forEach(function (s) { active.observe(s); });
+  } else {
+    $$(".reveal").forEach(function (s) { s.classList.add("seen"); });
+  }
+
+  // ---- padding igual ao do cliente (crypto.padded_size)
+  function padded(n) {
+    n += 1;
+    if (n <= 4096) { var s = 64; while (s < n) s *= 2; return s; }
+    return n + ((64 - n % 64) % 64);
+  }
+  function randomHex(n) {
+    var b = new Uint8Array(Math.min(n, 4096)), out = "";
+    crypto.getRandomValues(b);
+    for (var i = 0; i < b.length; i++) out += (b[i] < 16 ? "0" : "") + b[i].toString(16) + (i % 2 ? " " : "");
+    return out;
+  }
+  var enc = window.TextEncoder ? new TextEncoder() : null;
+  function bytes(t) { return enc ? enc.encode(t).length : unescape(encodeURIComponent(t)).length; }
+
+  // ---- terminal de demonstração: a mesma conversa, como você vê e como o servidor vê
+  var script = [
+    { t: "21:04", sys: "◈ Double Ratchet + ML-KEM-768 com trinity · número de segurança ✓" },
+    { t: "21:04", n: "trinity", c: "#ff2fa0", x: "o servidor tá vendo isso?" },
+    { t: "21:05", n: "neo", c: "#3cf0ff", x: "só bytes aleatórios. o tamanho sai na mesma faixa" },
+    { t: "21:05", n: "trinity", c: "#ff2fa0", x: "e se eu sair agora?" },
+    { t: "21:06", n: "neo", c: "#3cf0ff", x: "fica na caixa postal, cifrado, até você voltar" },
+    { t: "21:06", n: "trinity", c: "#ff2fa0", x: "👍" }
+  ];
+  var body = $("#term-body"), toggle = $("#term-toggle"), server = false, shown = [];
+  function cipher(text) {
+    var hex = randomHex(Math.ceil(padded(bytes(text) + 20) / 8)).replace(/ /g, "");
+    return "0x03·" + hex.slice(0, 44) + "…";
+  }
+  function render(line) {
+    var div = document.createElement("div");
+    div.className = "ln";
+    var t = document.createElement("span"); t.className = "t"; t.textContent = line.t; div.appendChild(t);
+    if (line.sys) {
+      var s = document.createElement("span"); s.className = "sys";
+      s.textContent = server ? "◈ envelope de controle · " + cipher(line.sys).slice(0, 28) : line.sys;
+      div.appendChild(s);
+    } else {
+      var n = document.createElement("span"); n.className = "n"; n.style.color = line.c; n.textContent = line.n; div.appendChild(n);
+      var x = document.createElement("span"); x.className = "x"; div.appendChild(x);
+      line.el = x;
+      x.textContent = server ? cipher(line.x) : line.x;
+    }
+    body.appendChild(div);
+  }
+  function scramble(line) {   // o texto "decifra" na frente de quem lê
+    if (!line.el || reduce || server) return;
+    var target = line.x, glyphs = "0123456789abcdef#$%&*+=<>", step = 0, steps = 14;
+    var id = setInterval(function () {
+      step++;
+      var keep = Math.floor(target.length * step / steps), out = target.slice(0, keep);
+      for (var i = keep; i < target.length; i++) out += target[i] === " " ? " " : glyphs[Math.random() * glyphs.length | 0];
+      line.el.textContent = out;
+      if (step >= steps) { clearInterval(id); line.el.textContent = target; }
+    }, 38);
+  }
+  function redraw() {
+    body.textContent = "";
+    shown.forEach(render);
+    $("#term-title").textContent = server ? "relay · o servidor vê" : "@trinity · você vê";
+    $("#term-meta").textContent = server ? "remetente, destinatário, horário e faixa de tamanho. Nada mais."
+                                         : "texto em claro só nos dois clientes";
+    $("#term").classList.toggle("server", server);
+  }
+  toggle.addEventListener("click", function () {
+    server = !server;
+    toggle.setAttribute("aria-pressed", server ? "true" : "false");
+    toggle.textContent = server ? "ver como você vê" : "ver como o servidor vê";
+    redraw();
+  });
+  var i = 0;
+  function next() {
+    if (i >= script.length) {
+      setTimeout(function () { shown = []; i = 0; redraw(); next(); }, 6000);
+      return;
+    }
+    var line = Object.assign({}, script[i++]);
+    shown.push(line); render(line); scramble(line);
+    setTimeout(next, reduce ? 0 : 1500);
+  }
+  if (reduce) { script.forEach(function (l) { shown.push(Object.assign({}, l)); }); redraw(); }
+  else next();
+
+  // ---- laboratório: tamanho no fio
+  var input = $("#lab-in"), cells = $$("#meter span");
+  function lab() {
+    var n = bytes(input.value), p = padded(n);
+    $("#lab-len").textContent = n + (n === 1 ? " byte" : " bytes");
+    $("#lab-pad").textContent = p + " bytes";
+    var lo = p <= 4096 ? (p === 64 ? 0 : p / 2) : p - 64, hi = p - 1;
+    $("#lab-same").textContent = "de " + lo + " a " + hi + " bytes";
+    var idx = p <= 4096 ? Math.round(Math.log(p / 64) / Math.LN2) : 6;
+    cells.forEach(function (c, k) { c.classList.toggle("on", k <= idx); });
+    $("#lab-hex").textContent = randomHex(p);
+  }
+  input.addEventListener("input", lab); lab();
+
+  // ---- filtro de comandos
+  var rows = $$("#cmds tr"), q = $("#cmd-q");
+  function norm(s) { return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+  q.addEventListener("input", function () {
+    var v = norm(q.value.trim()), any = false;
+    rows.forEach(function (r) { var ok = !v || norm(r.textContent).indexOf(v) >= 0; r.hidden = !ok; any = any || ok; });
+    $("#cmd-none").hidden = any;
+  });
+})();
 </script>
 </body>
 </html>
