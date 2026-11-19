@@ -5,7 +5,7 @@ import json
 import os
 
 import pytest
-from test_e2e import Harness, messages, run, until
+from test_e2e import Harness, envelope_kind, messages, run, until
 
 from crptochat import client as client_mod
 from crptochat import crypto
@@ -140,7 +140,7 @@ def v3_bodies(h, to):
         msg = json.loads(frame)
         if msg.get("t") == "direct" and msg.get("to", "").lower() == to:
             body = b64d(msg["body"])
-            if body[:1] in (b"\x03", b"\x05"):
+            if envelope_kind(body) in ("v3", "v3pq"):
                 out.append(body)
     return out
 
