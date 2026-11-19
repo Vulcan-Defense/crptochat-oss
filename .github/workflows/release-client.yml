@@ -2,9 +2,12 @@
 # release of the client repository in sync with main.
 #
 # Repository variable CLIENT_RELEASE_REPO (default hacking-table/crptochat-client)
-# says where releases go. Binaries look for updates on the public site in
-# CLIENT_UPDATE_URL (default https://crptochat.acpt.app.br/downloads/), which must
-# serve the same RELEASE, RELEASE.sig and binaries as the release.
+# says where releases go. Binaries look for updates in the latest release of
+# that repository, through the anonymous GitHub API (CLIENT_UPDATE_SOURCE,
+# default github:<CLIENT_RELEASE_REPO>). The public site in CLIENT_UPDATE_URL
+# (default https://crptochat.acpt.app.br/downloads/) is the fallback when the
+# API cannot be reached or rate-limits; it must serve the same RELEASE,
+# RELEASE.sig and binaries as the release.
 #
 # Signing (python -m crptochat.update genkey): the public key goes in the
 # repository variable CLIENT_SIGNING_PUBKEY and is embedded in every binary;
@@ -34,8 +37,10 @@ concurrency:
 
 env:
   CLIENT_REPO: ${{ vars.CLIENT_RELEASE_REPO || 'hacking-table/crptochat-client' }}
-  # where the binaries look for updates (public site, no login needed)
+  # fallback when the GitHub API cannot be read (public site, no login needed)
   CLIENT_UPDATE_URL: ${{ vars.CLIENT_UPDATE_URL || 'https://crptochat.acpt.app.br/downloads/' }}
+  # primary source: the latest release of the client repository (anonymous GitHub API)
+  CLIENT_UPDATE_SOURCE: ${{ vars.CLIENT_UPDATE_SOURCE || format('github:{0}', vars.CLIENT_RELEASE_REPO || 'hacking-table/crptochat-client') }}
 
 jobs:
   prepare:
@@ -104,6 +109,7 @@ jobs:
             echo "BUILT = ${{ needs.prepare.outputs.built }}"
             echo "REPO = \"${CLIENT_REPO}\""
             echo "UPDATE_URL = \"${CLIENT_UPDATE_URL}\""
+            echo "UPDATE_SOURCE = \"${CLIENT_UPDATE_SOURCE}\""
             echo "PUBKEY = \"${{ needs.prepare.outputs.pubkey }}\""
           } > crptochat/_build.py
           python -m pip install -U pip

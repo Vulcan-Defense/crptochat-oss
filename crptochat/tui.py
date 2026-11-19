@@ -2357,6 +2357,9 @@ class ChatApp(App):
                 raise ChatError(str(exc)) from None
             return None
         mine = update.current()
+        repo = update.describe(info.get("source") or repo)
+        if info.get("fallback") and not announce_only:
+            self.note(f"{info['fallback']}; a verificação usou o site de downloads", "warn")
         if not update.is_newer(info, mine):
             if info["built"] < (mine["built"] or 0) and update.can_self_update():
                 self.note(f"a release publicada em {repo} ({info['version']}, {info['commit']}) é mais antiga que "
@@ -2455,7 +2458,7 @@ class ChatApp(App):
         signed = ("manifesto assinado e SHA-256 conferidos" if info.get("signed")
                   else "SHA-256 conferido (cliente sem chave de assinatura)")
         answer = await self.ask(ChoiceScreen(
-            f"instalar crptochat {info['version']} ({info['commit']}) de {self.update_repo()}?", [(None, [
+            f"instalar crptochat {info['version']} ({info['commit']}) de {update.describe(info.get('source') or self.update_repo())}?", [(None, [
                 ("yes", "Instalar agora", signed),
                 ("no", "Agora não", "")])], heading="ATUALIZAÇÃO"))
         if answer != "yes":

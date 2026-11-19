@@ -37,6 +37,7 @@
   a { color: var(--cyan); text-underline-offset: 3px; }
   a:hover { color: #fff; text-shadow: var(--glow-c); }
   code { color: var(--yellow); }
+  p code, li code, td code, .box code { overflow-wrap: anywhere; word-break: break-word; }
   .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 80px; }
 
   /* barra fixa */
@@ -227,7 +228,7 @@
 
 <header class="hero" id="topo">
   <div>
-    <span class="chip"><i></i>v1.16 · Double Ratchet · pós-quântico · offline</span>
+    <span class="chip"><i></i>v1.18 · Double Ratchet · pós-quântico · offline</span>
     <h1><span class="a">chat no terminal,</span><span class="b glitch" data-t="cifrado ponta a ponta">cifrado ponta a ponta</span></h1>
     <p class="lead">O servidor só repassa blobs cifrados: não lê as conversas e, por padrão, não guarda histórico.
        Canais abertos e privados, mensagens diretas com Double Ratchet e camada pós-quântica, recados para quem
@@ -248,26 +249,36 @@
 
 <section id="baixar" class="reveal">
   <h2><span class="k">01</span><span class="w">baixe o cliente</span></h2>
-  <p class="sub">Um binário só, sem instalar nada. Não precisa de conta nem de login para baixar.</p>
+  <p class="sub">Um binário só, sem instalar nada, direto da última release do GitHub. Não precisa de conta nem de login.</p>
   <div class="grid" id="downloads">
-    <a class="dl" data-os="linux-amd64" href="crptochat-linux-amd64" download>
+    <a class="dl" data-os="linux-amd64" href="https://github.com/hacking-table/crptochat-client/releases/latest/download/crptochat-linux-amd64">
       <span class="os">🐧</span><span class="go">↓</span><b>Linux x86_64</b><small>crptochat-linux-amd64</small>
       <span class="badge">▶ recomendado para você</span></a>
-    <a class="dl" data-os="linux-arm64" href="crptochat-linux-arm64" download>
+    <a class="dl" data-os="linux-arm64" href="https://github.com/hacking-table/crptochat-client/releases/latest/download/crptochat-linux-arm64">
       <span class="os">🍓</span><span class="go">↓</span><b>Linux ARM64</b><small>crptochat-linux-arm64 · Raspberry Pi 4/5</small>
       <span class="badge">▶ recomendado para você</span></a>
-    <a class="dl" data-os="macos" href="crptochat-macos-arm64" download>
+    <a class="dl" data-os="macos" href="https://github.com/hacking-table/crptochat-client/releases/latest/download/crptochat-macos-arm64">
       <span class="os">⌘</span><span class="go">↓</span><b>macOS (Apple Silicon)</b><small>crptochat-macos-arm64</small>
       <span class="badge">▶ recomendado para você</span></a>
-    <a class="dl" data-os="windows" href="crptochat-windows-amd64.exe" download>
+    <a class="dl" data-os="windows" href="https://github.com/hacking-table/crptochat-client/releases/latest/download/crptochat-windows-amd64.exe">
       <span class="os">⊞</span><span class="go">↓</span><b>Windows x64</b><small>crptochat-windows-amd64.exe</small>
       <span class="badge">▶ recomendado para você</span></a>
   </div>
-  <p class="dim">Também aqui: <a href="RELEASE" download>RELEASE</a> (manifesto com versão e SHA-256, assinado),
-     <a href="RELEASE.sig" download>RELEASE.sig</a> (assinatura Ed25519), <a href="SHA256SUMS" download>SHA256SUMS</a>
-     e <a href="install.sh" download>install.sh</a>.</p>
-  <p><b>Linux e macOS, num comando</b> (o instalador confere a assinatura e o hash antes de instalar):</p>
-<pre><code>curl -fsSLO --proto '=https' https://crptochat.acpt.app.br/downloads/install.sh &amp;&amp; sh install.sh</code></pre>
+  <p class="dim">Da mesma release: <a href="https://github.com/hacking-table/crptochat-client/releases/latest/download/RELEASE">RELEASE</a> (manifesto com versão e SHA-256, assinado),
+     <a href="https://github.com/hacking-table/crptochat-client/releases/latest/download/RELEASE.sig">RELEASE.sig</a> (assinatura Ed25519), <a href="https://github.com/hacking-table/crptochat-client/releases/latest/download/SHA256SUMS">SHA256SUMS</a>
+     e <a href="https://github.com/hacking-table/crptochat-client/releases/latest/download/install.sh">install.sh</a>. Todas as versões em
+     <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>.</p>
+  <p class="dim">GitHub fora do ar? Esta pasta espelha a mesma release:
+     <a href="crptochat-linux-amd64" download>linux-amd64</a> ·
+     <a href="crptochat-linux-arm64" download>linux-arm64</a> ·
+     <a href="crptochat-macos-arm64" download>macos-arm64</a> ·
+     <a href="crptochat-windows-amd64.exe" download>windows-amd64.exe</a> ·
+     <a href="RELEASE" download>RELEASE</a> · <a href="RELEASE.sig" download>RELEASE.sig</a> ·
+     <a href="SHA256SUMS" download>SHA256SUMS</a> · <a href="install.sh" download>install.sh</a>.</p>
+  <p><b>Linux e macOS, num comando</b> (o instalador baixa da última release do GitHub, ou deste site se o GitHub
+     não responder, e confere a assinatura e o hash antes de instalar):</p>
+<pre><code>curl -fsSLO --proto '=https' https://github.com/hacking-table/crptochat-client/releases/latest/download/install.sh &amp;&amp; sh install.sh</code></pre>
+  <p class="dim">Pelo espelho: <code>curl -fsSLO --proto '=https' https://crptochat.acpt.app.br/downloads/install.sh &amp;&amp; sh install.sh</code></p>
 </section>
 
 <section id="verificar" class="reveal">
@@ -285,9 +296,10 @@
   <ul>
     <li>O <code>install.sh</code> confere a assinatura do <code>RELEASE</code> com essa chave e o SHA-256 do binário
         contra o manifesto assinado; qualquer divergência cancela a instalação.</li>
-    <li>Os mesmos arquivos ficam espelhados nas releases públicas em
-        <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>.
-        Baixar dos dois lugares e comparar é uma conferência a mais: quem quisesse enganar você teria de alterar os dois.</li>
+    <li>As releases saem em
+        <a href="https://github.com/hacking-table/crptochat-client/releases">github.com/hacking-table/crptochat-client/releases</a>
+        e ficam espelhadas aqui. Baixar dos dois lugares e comparar é uma conferência a mais: quem quisesse enganar você
+        teria de alterar os dois.</li>
   </ul>
 
   <p><b>Conferência rápida do hash</b>, com o <code>SHA256SUMS</code> na mesma pasta do binário:</p>
@@ -355,16 +367,20 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
   </ol>
 
   <h2 style="margin-top:40px"><span class="k">↻</span><span class="w">atualizações</span></h2>
-  <p>Dentro do chat, <code>/update</code> procura versão nova <b>neste site</b> e só instala uma release
+  <p>O cliente procura versão nova sozinho (ao conectar e a cada 6 horas) e <b>pergunta</b> se você quer
+     atualizar; <code>/update</code> faz o mesmo na hora. Desde a 1.18 ele busca a <b>última release do GitHub</b>
+     e, se o GitHub não responder ou limitar as consultas, usa <b>este site</b>. Só instala uma release
      <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
-     reinstala a mesma). Antes de trocar o binário, confere o SHA-256 dele contra o manifesto assinado.
-     Não precisa de conta nem de login.</p>
+     reinstala a mesma), e confere o SHA-256 do binário contra o manifesto assinado antes de trocar.
+     Não precisa de conta nem de login, e nenhum token é enviado.</p>
   <div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
-     e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.</div>
+     e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.
+     <b>No macOS com a 1.16 ou anterior</b>, o <code>/update</code> falha na validação do certificado: baixe a versão
+     nova uma vez pelo passo 1.</div>
 </section>
 
 <section id="novidades" class="reveal">
-  <h2><span class="k">★</span><span class="w">novidades até a 1.16</span></h2>
+  <h2><span class="k">★</span><span class="w">novidades até a 1.18</span></h2>
   <p class="sub">Tudo negociado com quem está do outro lado: clientes antigos continuam conversando normalmente.</p>
   <div class="feat">
     <article class="card"><span class="v">1.12</span>
@@ -397,6 +413,18 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
       <details><summary>como funciona</summary>
         <p>Vão as chaves derivadas do canal, nunca a senha. Quem é convidado entra com <code>/join #canal</code>,
            sem digitar nada, inclusive se estava offline.</p></details></article>
+    <article class="card"><span class="v">1.18</span>
+      <h3>Atualização direto do GitHub</h3>
+      <p>O <code>/update</code> busca a última release do GitHub e usa este site só se o GitHub não responder.</p>
+      <details><summary>como funciona</summary>
+        <p>A API diz qual é a release e seus arquivos; tudo vem dessa mesma release, sem token. Assinatura,
+           SHA-256 e proteção contra downgrade valem igual, e falha de segurança nunca cai no plano B.</p></details></article>
+    <article class="card"><span class="v">1.17</span>
+      <h3>Aviso de versão nova</h3>
+      <p>O chat confere sozinho a cada 6 horas, mostra <code>↑ DISPONÍVEL</code> no topo e pergunta se quer atualizar.</p>
+      <details><summary>como funciona</summary>
+        <p>Atualizar agora, Depois ou Pular esta versão. No macOS o download agora valida o certificado com as
+           CAs que vêm no binário. <code>/update off</code> desliga a verificação.</p></details></article>
     <article class="card"><span class="v">1.16</span>
       <h3>Responder, reagir, editar</h3>
       <p><code>/reply</code>, <code>/react 👍</code>, <code>/edit</code>, <code>/del</code> e confirmação de leitura opcional.</p>
@@ -450,7 +478,7 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
     <tr class="new"><td>/voicemask on|off</td><td>liga ou desliga o disfarce de voz</td></tr>
     <tr><td>/ttl nick 10m</td><td>mensagens diretas que somem</td></tr>
     <tr><td>/search texto · Ctrl+F</td><td>busca no que está na tela (só local)</td></tr>
-    <tr><td>/update</td><td>atualiza pelo site, conferindo assinatura e SHA-256</td></tr>
+    <tr class="new"><td>/update</td><td>atualiza pela última release do GitHub (ou pelo site), conferindo assinatura e SHA-256</td></tr>
     <tr><td>/help</td><td>todo o resto</td></tr>
   </table>
   <p class="none" id="cmd-none" hidden>nenhum comando com isso; tente <code>/help</code> no chat.</p>

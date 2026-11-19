@@ -1,10 +1,13 @@
 #!/bin/sh
-# Instala (ou atualiza) o cliente crptochat a partir da release publicada no
-# site https://crptochat.acpt.app.br/downloads/ (sem login nem token).
+# Instala (ou atualiza) o cliente crptochat a partir da última release
+# publicada no GitHub (github.com/hacking-table/crptochat-client), sem login nem
+# token. Se o GitHub não responder, usa o site
+# https://crptochat.acpt.app.br/downloads/, que espelha a mesma release.
 #
 #   sh install.sh                     # instala em ~/.local/bin/crptochat
 #   CRPTOCHAT_BIN_DIR=/usr/local/bin sudo -E sh install.sh
-#   CRPTOCHAT_UPDATE_URL=https://espelho/ sh install.sh   # outra origem (só https)
+#   CRPTOCHAT_UPDATE_URL=https://espelho/ sh install.sh   # só esta origem (só https)
+#   CRPTOCHAT_UPDATE_FALLBACK=off sh install.sh           # sem o site como plano B
 #
 # Segurança: a chave pública de assinatura vai embutida neste arquivo quando a
 # release é publicada. Antes de instalar, o script confere a assinatura
@@ -30,7 +33,10 @@ for arg in "$@"; do
     esac
 done
 
-BASE="${CRPTOCHAT_UPDATE_URL:-https://crptochat.acpt.app.br/downloads/}"
+REPO="${CRPTOCHAT_REPO:-hacking-table/crptochat-client}"
+GITHUB="${CRPTOCHAT_GITHUB:-https://github.com}"          # testes apontam para um servidor local
+SITE="${CRPTOCHAT_UPDATE_FALLBACK:-https://crptochat.acpt.app.br/downloads/}"
+BASE="${CRPTOCHAT_UPDATE_URL:-}"
 DEST="${CRPTOCHAT_BIN_DIR:-$HOME/.local/bin}"
 # Chave pública Ed25519 (base64, 32 bytes), gravada aqui pela publicação.
 PUBKEY="@CRPTOCHAT_SIGNING_PUBKEY@"
@@ -89,6 +95,33 @@ asset="crptochat-$os-$arch"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+# baixa os três arquivos de uma pasta https (só https, inclusive nos
+# redirecionamentos; limite de tamanho e de tempo)
+fetch_from() {
+    from="$1"
+    case "$from" in
+        https://*) ;;
+        *) fail "origem de download precisa ser https:// (recebi: $from)" ;;
+    esac
+    case "$from" in */) ;; *) from="$from/" ;; esac
+    for name in "$asset" RELEASE RELEASE.sig; do
+        rm -f "$tmp/$name"
+        curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize 209715200 --max-time 600 \
+            -o "$tmp/$name" "$from$name" || return 1
+    done
+}
+
+# a última release do GitHub: descobre a tag uma vez (o redirecionamento de
+# /releases/latest) e baixa tudo dessa mesma tag, para não misturar releases
+github_release_url() {
+    location="$(curl -fsSI --proto '=https' --max-time 30 "$GITHUB/$REPO/releases/latest" 2>/dev/null \
+        | tr -d '\r' | sed -n 's/^[Ll]ocation: *//p' | tail -n 1)"
+    tag="${location##*/releases/tag/}"
+    case "$location" in */releases/tag/*) ;; *) return 1 ;; esac
+    case "$tag" in ''|*/*|*' '*) return 1 ;; esac
+    printf '%s/%s/releases/download/%s/' "$GITHUB" "$REPO" "$tag"
+}
+
 fetch() {
     if [ -n "${CRPTOCHAT_RELEASE_DIR:-}" ]; then
         for name in "$asset" RELEASE RELEASE.sig; do
@@ -96,23 +129,26 @@ fetch() {
         done
         return 0
     fi
-    case "$BASE" in
-        https://*) ;;
-        *) fail "origem de download precisa ser https:// (recebi: $BASE)" ;;
-    esac
-    case "$BASE" in */) ;; *) BASE="$BASE/" ;; esac
     command -v curl >/dev/null 2>&1 || return 1
-    for name in "$asset" RELEASE RELEASE.sig; do
-        # só https, inclusive nos redirecionamentos; limite de tamanho e de tempo
-        curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize 209715200 --max-time 600 \
-            -o "$tmp/$name" "$BASE$name" || return 1
-    done
+    if [ -n "$BASE" ]; then                       # origem escolhida: só ela
+        fetch_from "$BASE" && return 0
+        return 1
+    fi
+    if url="$(github_release_url)" && fetch_from "$url"; then
+        BASE="$url"
+        return 0
+    fi
+    case "$SITE" in ''|off|OFF|0|nao|não|none) return 1 ;; esac
+    echo "o GitHub não respondeu; baixando do site $SITE" >&2
+    fetch_from "$SITE" || return 1
+    BASE="$SITE"
 }
 
 if ! fetch; then
-    echo "não foi possível baixar $asset de $BASE (precisa do curl e de acesso ao site)." >&2
+    echo "não foi possível baixar $asset (precisa do curl e de acesso ao GitHub ou ao site)." >&2
     exit 1
 fi
+echo "release baixada de ${BASE:-${CRPTOCHAT_RELEASE_DIR:-?}}"
 [ -f "$tmp/$asset" ] || fail "a release não tem $asset"
 [ -f "$tmp/RELEASE" ] || fail "a release não tem o manifesto RELEASE"
 [ -s "$tmp/RELEASE.sig" ] || fail "a release não está assinada (falta RELEASE.sig)"
