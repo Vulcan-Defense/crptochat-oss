@@ -1,0 +1,9 @@
+{
+  "name": "crptochat-web-build",
+  "private": true,
+  "description": "Build-time only: lets precompile.mjs run Pyodide under Node (Pyodide imports ws there). Nothing here reaches the page.",
+  "type": "module",
+  "dependencies": {
+    "ws": "8.18.3"
+  }
+}

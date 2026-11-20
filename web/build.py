@@ -2,19 +2,25 @@
 """Build web/dist/: the static site of the browser client.
 
     python3 web/fetch_vendor.py      # once: downloads and verifies vendor/
-    python3 web/build.py             # page + app.zip (crptochat + crptoweb) + vendor/
+    (cd web && npm ci)               # once: the build runs Pyodide under Node
+    python3 web/build.py             # dist/: the page, the runtime and the bytecode
 
-app.zip holds the crptochat package from this repository (the same code as the
-terminal client) and web/py/crptoweb; the zip is deterministic (fixed dates and
-order), so the same commit builds the same bytes. dist/SHA256SUMS lists every
-file, for comparing what a host serves with what was built.
+The page loads Python already compiled (precompile.mjs runs Pyodide's own
+Python at build time): py/python_stdlib.zip (the standard library),
+py/site.zip (Textual, Rich..., the crptochat package from this repository and
+web/py/crptoweb) and py/later.zip (Pygments, fetched once the chat is open).
+Every zip is deterministic (fixed dates and order, hash-based .pyc), so the
+same commit builds the same bytes. dist/SHA256SUMS lists every file, for
+comparing what a host serves with what was built.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 
@@ -46,9 +52,41 @@ def main() -> int:
         return 1
     if os.path.isdir(DIST):
         shutil.rmtree(DIST)
+    if not os.path.isdir(os.path.join(HERE, "node_modules", "ws")):
+        print("falta web/node_modules/: rode antes (cd web && npm ci)", file=sys.stderr)
+        return 1
     shutil.copytree(os.path.join(HERE, "src"), DIST)
-    shutil.copytree(os.path.join(HERE, "vendor"), os.path.join(DIST, "vendor"))
-    app_zip(os.path.join(DIST, "app.zip"))
+    vendor = os.path.join(DIST, "vendor")
+    shutil.copytree(os.path.join(HERE, "vendor"), vendor)
+    app = os.path.join(HERE, "app.zip.tmp")
+    app_zip(app)
+    try:
+        subprocess.run(["node", os.path.join(HERE, "precompile.mjs"), os.path.join(HERE, "vendor"), app,
+                        os.path.join(DIST, "py")], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        print("o build precisa do Node 18+ (node no PATH)", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(exc.stderr.decode(errors="replace")[-2000:])
+        return 1
+    finally:
+        os.remove(app)
+    # what the page no longer fetches: replaced by the precompiled zips
+    shutil.rmtree(os.path.join(vendor, "wheels"))
+    os.remove(os.path.join(vendor, "pyodide", "python_stdlib.zip"))
+    # the service worker caches exactly this build's files, under this build's id
+    files = sorted(os.path.relpath(os.path.join(b, f), DIST).replace(os.sep, "/")
+                   for b, _d, fs in os.walk(DIST) for f in fs if f != "sw.js")
+    digest = hashlib.sha256()
+    for rel in files:
+        with open(os.path.join(DIST, rel), "rb") as fh:
+            digest.update(rel.encode() + b"\0" + hashlib.sha256(fh.read()).digest())
+    sw = os.path.join(DIST, "sw.js")
+    with open(sw) as fh:
+        text = fh.read()
+    with open(sw, "w") as fh:
+        fh.write(text.replace('"__BUILD__"', json.dumps(digest.hexdigest()[:16]))
+                     .replace("__FILES__", json.dumps(files)))
     sums = []
     for base, _dirs, files in os.walk(DIST):
         for name in files:

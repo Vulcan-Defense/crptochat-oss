@@ -15,7 +15,8 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
 | Peça | Onde |
 |---|---|
 | Python 3.14 + `cryptography` 47 em WebAssembly | `vendor/pyodide/` (Pyodide 314.0.8) |
-| Textual, Rich e dependências (wheels puros) | `vendor/wheels/` |
+| Textual, Rich e dependências (wheels puros) | `vendor/wheels/`, entregues já compilados em `py/site.zip.gz` |
+| Python pré-compilado (bytecode) | `py/` no `dist/`, gerado por `precompile.mjs` |
 | Terminal na página | `vendor/xterm/` (xterm.js 6) |
 | Driver do Textual para o xterm.js | `py/crptoweb/driver.py` |
 | Conexão por WebSocket no lugar do TCP | `py/crptoweb/net.py` |
@@ -34,10 +35,31 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   - nada de analytics nem fontes externas.
   - Exceção: `style-src` precisa de `'unsafe-inline'`, porque o xterm.js
     aplica estilos inline. Estilo não executa código.
-- **`build.py`** gera `dist/`, que é o site estático:
-  - `app.zip` é determinístico (datas e ordem fixas) e leva `crptochat/` (sem
-    os módulos do servidor) e `crptoweb/`;
-  - `SHA256SUMS` lista todos os arquivos.
+- **`build.py`** gera `dist/`, que é o site estático. O Python chega **já
+  compilado**: `precompile.mjs` roda o próprio Python do Pyodide no Node,
+  então é a mesma versão e o mesmo bytecode da página. Os `.pyc` são "unchecked
+  hash" (PEP 552), sem data e sem conferir a fonte, e não vai fonte junto
+  (tracebacks ficam sem as linhas de código):
+  - `py/python_stdlib.zip`: só a parte da stdlib que a página importa antes do
+    login (1,9 MB em vez de 4,5);
+  - `py/site.zip.gz`: Textual, Rich…, `crptochat/` (sem os módulos do servidor)
+    e `crptoweb/`;
+  - `py/stdlib-rest.zip.gz` e `py/later.zip.gz` (Pygments, só para colorir
+    código): baixados em segundo plano enquanto a pessoa digita. O chat só começa
+    depois que chegaram, então nunca falta módulo.
+  
+  Os `.zip.gz` são zips sem compressão interna e comprimidos inteiros. Ficam
+  menores e o navegador descomprime nativamente (`DecompressionStream`), sem
+  depender de o host comprimir `.zip`.
+- **Build reproduzível:** datas, ordem e bytecode fixos, então o mesmo commit
+  gera os mesmos bytes. O CI (`.github/workflows/web.yml`) confere isso
+  buildando duas vezes, e roda `smoke.mjs`, que carrega o `dist/` como a página
+  faz. `SHA256SUMS` lista todos os arquivos.
+- **Service worker (`sw.js`):** guarda os arquivos **deste build** num cache
+  com o id do build, que é o hash de todos os arquivos. Da segunda visita em
+  diante a página abre sem baixar nada, e funciona até offline. Um build novo
+  troca o `sw.js`; o navegador instala o novo numa visita seguinte e apaga o
+  cache antigo. Só arquivos do build passam pelo cache; o WebSocket não.
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
 
@@ -76,7 +98,9 @@ chama programas locais e não funciona no navegador).
 
 ```sh
 python3 web/fetch_vendor.py          # baixa e confere web/vendor/ (~19 MB)
+(cd web && npm ci)                   # o build roda o Pyodide no Node (precisa do Node 18+)
 python3 web/build.py                 # gera web/dist/
+node web/smoke.mjs                   # opcional: confere o build
 
 # servidor com a entrada WebSocket, aceitando a página servida em localhost:8123
 crptochat-server --no-tls --ws-port 7778 --ws-origin http://localhost:8123
@@ -94,14 +118,25 @@ Testado com Chromium headless (Playwright), contra um servidor local:
 
 | | Resultado |
 |---|---|
-| Carregamento no desktop (sem limitação) | **~5 s** até o botão "entrar" (Pyodide 2,3 s · pacotes 0,6 s · imports 2 s) |
+| Carregamento no desktop (sem limitação) | **~1,5 s** até o botão "entrar" (era ~5 s antes do bytecode pré-compilado) |
 | Login até ONLINE | < 1 s |
 | DM navegador → terminal e terminal → navegador | **funciona**, cifrada de ponta a ponta, decifrada pelo cliente de terminal de verdade |
 | Chave no IndexedDB | sobrevive a recarregar; senha errada é recusada; a mesma chave é aceita pelo servidor |
 | Memória | ~80 MB de memória do WebAssembly + ~20 MB de heap JS |
-| Tamanho | 18,9 MB sem compressão; **~11,4 MB com gzip** (o wasm cai de 9,6 para 3,5 MB) |
-| Celular emulado (Pixel 7, CPU 4× mais lenta, 4G de 9 Mbit/s) | **42 s** no primeiro acesso, 33 s com cache: o gargalo é CPU (iniciar o Python e importar), não rede |
-| Layout em tela de celular | **quebra**: os painéis laterais têm largura fixa e espremem o chat |
+| Transferido até poder entrar | ~11 MB com gzip (o wasm é 3,5 MB); mais ~4 MB em segundo plano |
+| Celular emulado (Pixel 7, CPU 4× mais lenta), **sem limitar a rede** | **22,8 s → 7,2 s** |
+| Celular emulado, CPU 4× + **4G de 9 Mbit/s**, primeiro acesso | **42 s → 14,5 s** (agora limitado pela banda) |
+| Idem, **visitas seguintes** (service worker) | **33 s → 6,1 s**, sem baixar nada |
+| Layout em tela de celular | resolvido no PR da TUI estreita (#21) |
+
+De onde veio o ganho, no perfil com CPU 4× (`imports` é o `import` do
+crptochat e do Textual):
+
+| Fase | Antes | Depois |
+|---|---|---|
+| iniciar o Python | 10,5 s | 3,1 s (stdlib já compilada) |
+| imports | ~10 s | ~2,2 s (bytecode pronto) |
+| pacotes | 2,9 s | 1,0 s (só o `cryptography`; o resto vem no `site.zip.gz`) |
 
 Achado que virou correção no cliente principal: o `cryptography` do Pyodide
 tem o módulo ML-KEM, mas o OpenSSL dele não tem o algoritmo. O
@@ -120,16 +155,14 @@ já trata isso com os outros clientes.
 
 ## Próximos passos
 
-1. **Velocidade no celular.** O objetivo é abaixo de 10 s num aparelho médio:
-   - snapshot de memória do Pyodide (carregar o Python já inicializado);
-   - `.pyc` pré-compilados no `app.zip`;
-   - imports preguiçosos;
-   - uma `python_stdlib.zip` só com o necessário;
-   - service worker com cache.
-2. **Layout estreito na TUI.** Abaixo de ~80 colunas, esconder os painéis
-   laterais (abrir pelo menu). Isso melhora também o terminal pequeno.
+1. **Velocidade** (o que falta): medir num celular de verdade. Se ainda pesar,
+   os próximos passos são o snapshot de memória do Pyodide (API privada,
+   experimental; carregaria o Python já inicializado, guardado no aparelho
+   depois da primeira visita) e diminuir o primeiro download, que hoje é
+   limitado pela banda.
+2. ~~Layout estreito na TUI~~: PR #21.
 3. **Publicação** (só com isto pronto):
-   - build reproduzível no CI;
+   - ~~build reproduzível no CI~~ (`web.yml`);
    - manifesto assinado na release;
    - hospedagem fora do servidor do chat;
    - monitor externo comparando o que é servido com a release;
