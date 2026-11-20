@@ -102,6 +102,7 @@ MENU = [
         ("leave", "Sair do canal / fechar conversa atual", ""),
     ]),
     ("CONVERSAS", [
+        ("windows", "Janelas abertas", "ir para outro canal ou conversa · Ctrl+N / Ctrl+P"),
         ("dm", "Mensagem direta", "abre uma conversa com um nick"),
         ("friends", "Amigos", "ver quem está online, adicionar, remover"),
         ("away", "Ausente / voltei", "avisa quem falar com você"),
@@ -343,6 +344,18 @@ class ChatLog(RichLog):
         if event.size.width != self._last_width:
             self._last_width = event.size.width
             self.app.call_after_refresh(self.app.refill)
+
+
+# Below these widths (in columns) the layout gives up side panels, so the chat
+# still fits a phone (the browser client) or a small terminal window.
+COMPACT_BELOW = 100      # members / identity panel goes
+NARROW_BELOW = 64        # the window list goes too; the top bar lists the windows
+
+
+class TopBar(Static):
+    def on_click(self, _event) -> None:
+        if self.app.has_class("-narrow"):
+            self.app.run_cmd(self.app.menu_windows(), quiet=True)
 
 
 class BufferList(Static):
@@ -606,6 +619,11 @@ class ChatApp(App):
               border-title-style: bold; background: $cc-panel; padding: 1 2; }
     #dialog Input { border: tall $cc-cyan; background: $cc-bg; margin: 1 0 0 0; }
     #dlg-hint { margin: 1 0 0 0; }
+    .-compact #members { display: none; }
+    .-narrow #buffers { display: none; }
+    .-narrow #center { border: heavy $cc-cyan; border-left: none; border-right: none; }
+    .-narrow #log { padding: 0; }
+    .-narrow #dialog { width: 100%; padding: 1 1; }
     """
 
     BINDINGS = [
@@ -655,7 +673,7 @@ class ChatApp(App):
     # ---------------------------------------------------------------- layout
 
     def compose(self) -> ComposeResult:
-        yield Static(id="topbar")
+        yield TopBar(id="topbar")
         with Horizontal(id="main"):
             yield BufferList(id="buffers")
             with Vertical(id="center"):
@@ -676,6 +694,7 @@ class ChatApp(App):
         self._banner = banner()
         for line in self._banner:
             self.buffers[CONSOLE].lines.append(line)
+        self.apply_width()
         self.render_hints()
         self.note(f"identidade: {self.client.nick} · fingerprint {self.client.fingerprint}", buffer=CONSOLE)
         self.note("pressione Esc para abrir o menu ou digite /help para ver os comandos", buffer=CONSOLE)
@@ -686,8 +705,34 @@ class ChatApp(App):
         self.set_interval(30, lambda: self.run_cmd(self.poll_presence(), quiet=True))
         self.set_interval(UPDATE_EVERY, self.periodic_update_check)
 
-    def on_resize(self) -> None:
-        self.render_topbar()
+    def on_resize(self, event) -> None:
+        # the app applies a new size a moment later (debounced): use the event's
+        self.apply_width(event.size.width)
+
+    def apply_width(self, width: int | None = None) -> None:
+        if not hasattr(self, "log_w"):
+            return
+        width = self._width = width or self.size.width
+        narrow = width < NARROW_BELOW
+        changed = narrow != self.has_class("-narrow")
+        self.set_class(width < COMPACT_BELOW, "-compact")
+        self.set_class(narrow, "-narrow")
+        if changed:
+            self.refresh_all(refill=True)       # lines are laid out for the width they were made at
+        else:
+            self.render_topbar()
+
+    def width_now(self) -> int:
+        # the width of the last resize, which the app applies a moment later
+        return getattr(self, "_width", 0) or self.size.width
+
+    @property
+    def narrow(self) -> bool:
+        return self.has_class("-narrow")
+
+    def nick_col(self, nick: str) -> str:
+        width = 8 if self.narrow else 14
+        return f"{nick[:width]:>{width}}"
 
     def get_css_variables(self) -> dict[str, str]:
         variables = super().get_css_variables()
@@ -839,12 +884,21 @@ class ChatApp(App):
         else:
             center.border_title = "◢ console"
             center.border_subtitle = ""
-        self.query_one("#prompt", Static).update(Text.assemble(
-            (self.client.nick, f"bold {CYAN}"), (" → ", DIM), (buf.name, f"bold {PINK}"), (" ❯", f"bold {MAGENTA}")))
+        if self.narrow:
+            prompt = Text.assemble((buf.name[:14], f"bold {PINK}"), (" ❯", f"bold {MAGENTA}"))
+        else:
+            prompt = Text.assemble((self.client.nick, f"bold {CYAN}"), (" → ", DIM), (buf.name, f"bold {PINK}"),
+                                   (" ❯", f"bold {MAGENTA}"))
+        self.query_one("#prompt", Static).update(prompt)
+        self.render_hints()
         if refill:
             self.refill()
 
     def render_hints(self) -> None:
+        if self.narrow:
+            self.query_one("#hints", Static).update(Text.assemble(
+                (" Esc", CYAN), " menu  ", ("toque no topo", CYAN), " janelas  ", ("/help", CYAN), style=DIM))
+            return
         self.query_one("#hints", Static).update(Text.assemble(
             (" Esc", CYAN), " menu  ", ("F2", CYAN), " gravar áudio  ", ("^N ^P", CYAN), " janelas  ",
             ("PgUp PgDn", CYAN), " rolar  ", ("Tab", CYAN), " completar  ", ("/help", CYAN), " comandos  ",
@@ -853,6 +907,9 @@ class ChatApp(App):
     def render_topbar(self) -> None:
         dot, label = {"online": (GREEN, "ONLINE"), "connecting": (YELLOW, "CONECTANDO"),
                       "offline": (MAGENTA, "OFFLINE")}[self.state]
+        if self.narrow:
+            self.render_topbar_narrow(dot, label)
+            return
         left = Text.assemble((" ▓▒░ ", MAGENTA), gradient("CRPTOCHAT"), (" ░▒▓ ", MAGENTA),
                              (f" {self.client.server_name or self.client.host}", DIM))
         badges = Text()
@@ -868,10 +925,62 @@ class ChatApp(App):
         right = Text.assemble(badges, ("● ", dot), (label, f"bold {dot}"), ("  ", ""),
                               ("TLS " if secure else "SEM TLS ", GREEN if secure else YELLOW),
                               ("· E2EE ", GREEN))
-        gap = max(1, self.size.width - left.cell_len - right.cell_len)
+        gap = max(1, self.width_now() - left.cell_len - right.cell_len)
         self.query_one("#topbar", Static).update(Text.assemble(left, " " * gap, right))
 
+    def window_names(self) -> list[str]:
+        return ([CONSOLE] + [n for n in self.buffers if n.startswith("#")]
+                + [n for n in self.buffers if n.startswith("@")])
+
+    def render_topbar_narrow(self, dot: str, label: str) -> None:
+        """On a phone the top bar is the window list: status, the current window
+        and the others with unread counts; touching it opens the window picker."""
+        width = self.width_now()
+        right = Text()
+        # the same badges as the wide bar, short: who you are here and how the link is protected
+        if self.client.guest:
+            right.append("ANÔN ", style=f"bold {ORANGE}")
+        if self.client.role in ("admin", "mod"):
+            right.append("★ " if self.client.role == "admin" else "☆ ", style=f"bold {ORANGE}")
+        if self.client.away:
+            right.append("AUS ", style=f"bold {YELLOW}")
+        if self.update_info:
+            right.append("↑ ", style=f"bold {GREEN}")
+        secure = self.client.tls or getattr(self.client, "external_tls", False)
+        right.append_text(Text.assemble(
+            ("● ", dot), (label[:3] if label != "ONLINE" else "ON", f"bold {dot}"), " ",
+            ("TLS" if secure else "S/TLS", GREEN if secure else YELLOW), ("·E2EE", GREEN), (" ☰", f"bold {MAGENTA}")))
+        tabs = Text(" ")
+        names = self.window_names()
+        cur = names.index(self.current) if self.current in names else 0
+        for name in names[cur:] + names[:cur]:          # the current one first, then the next ones
+            buf = self.buffers[name]
+            if name == self.current:
+                tabs.append(("◈ " if name == CONSOLE else "") + name[:16], style=f"bold {CYAN}")
+            elif buf.unread:
+                tabs.append(f"  {name[:12]}", style=f"bold {YELLOW}" if buf.alert else TEXT)
+                tabs.append(f" {buf.unread}", style=f"bold {MAGENTA}")
+            else:
+                tabs.append(f"  {name[:12]}", style=DIM)
+        tabs.truncate(max(4, width - right.cell_len - 1), overflow="ellipsis")
+        gap = max(1, width - tabs.cell_len - right.cell_len)
+        self.query_one("#topbar", Static).update(Text.assemble(tabs, " " * gap, right))
+
+    async def menu_windows(self) -> None:
+        items = []
+        for name in self.window_names():
+            buf = self.buffers[name]
+            detail = "você está aqui" if name == self.current else (f"{buf.unread} não lidas" if buf.unread else "")
+            label = "◈ console" if name == CONSOLE else name
+            items.append((name, label, detail))
+        choice = await self.ask(ChoiceScreen("ir para qual janela?", [(None, items)], heading="JANELAS",
+                                             start=self.current))
+        if choice and choice in self.buffers:
+            self.switch(choice)
+
     def render_buffers(self) -> None:
+        if self.narrow:
+            self.render_topbar()                 # the top bar is the window list there
         widget = self.query_one("#buffers", BufferList)
         out, rows = Text(), []
 
@@ -1003,8 +1112,7 @@ class ChatApp(App):
     def action_cycle(self, step: int) -> None:
         if self.in_dialog:
             return
-        names = ([CONSOLE] + [n for n in self.buffers if n.startswith("#")]
-                 + [n for n in self.buffers if n.startswith("@")])
+        names = self.window_names()
         self.switch(names[(names.index(self.current) + step) % len(names)])
 
     def action_scroll(self, direction: int) -> None:
@@ -1040,7 +1148,8 @@ class ChatApp(App):
 
     def note(self, text: str, level: str = "info", buffer: str | None = None) -> None:
         color = level_color(level)
-        self.add_line(buffer, Text.assemble(self.stamp(), ("        ◈ ", color), (clean(text), color)),
+        self.add_line(buffer, Text.assemble(self.stamp(), ("◈ " if self.narrow else "        ◈ ", color),
+                                                    (clean(text), color)),
                       alert=level in ("warn", "err"))
 
     def render_msg(self, entry: dict) -> Text:
@@ -1048,7 +1157,7 @@ class ChatApp(App):
         edits, deletions, reactions and read receipts)."""
         nick, mine = entry["nick"], entry["mine"]
         color = CYAN if mine else nick_color(nick)
-        line = Text.assemble((entry["stamp"], DIM), (f"{nick[:14]:>14}", f"bold {color}"),
+        line = Text.assemble((entry["stamp"], DIM), (self.nick_col(nick), f"bold {color}"),
                              (" ▏", MAGENTA if mine else DIM))
         reply = entry.get("reply")
         if reply and not entry.get("deleted"):
@@ -1220,7 +1329,7 @@ class ChatApp(App):
             nick = clean(e["nick"])
             mark = ("✓ ", GREEN) if e["verified"] else ("⚠ assinatura não confere com a chave conhecida · ", f"bold {ORANGE}")
             line = Text.assemble((time.strftime("%d/%m %H:%M ", time.localtime(e["ts"])), DIM),
-                                 (f"{nick[:14]:>14}", nick_color(nick)), (" ┆ ", DIM), mark,
+                                 (self.nick_col(nick), nick_color(nick)), (" ┆ ", DIM), mark,
                                  (clean(e["text"]), TEXT if e["verified"] else DIM))
             left = int(e.get("expires") or 0) - now
             self.add_line(chan, line, ttl=int(left) if 0 < left < 400 * 86400 else 0)
@@ -1404,7 +1513,7 @@ class ChatApp(App):
         color = CYAN if mine else nick_color(nick)
         length = f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
         wave = "▂▅▇▃▆▂▇▅▃▆▂▄"[: 4 + min(8, int(seconds) // 3)]
-        line = Text.assemble(self.stamp(), (f"{nick[:14]:>14}", f"bold {color}"), (" ▏", MAGENTA if mine else DIM),
+        line = Text.assemble(self.stamp(), (self.nick_col(nick), f"bold {color}"), (" ▏", MAGENTA if mine else DIM),
                              ("▶ ", f"bold {GREEN}"), (wave, PINK), (f" áudio {length}", f"bold {TEXT}"),
                              (f"  {human_size(len(data))}  ", DIM), (f"/play {number}", CYAN))
         alert = buffer.startswith("@") and not mine

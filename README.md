@@ -439,6 +439,19 @@ ofertas, ver e conferir fingerprints, **mover a chave do nick para um
 pendrive**, ajuda, limpar e sair. Cada ação abre diálogos que pedem só o
 necessário (escolha de nick/canal em lista, caminho do arquivo, senha).
 
+### Telas estreitas
+
+A interface se ajusta à largura (janela pequena, celular no cliente de
+navegador):
+
+- **Menos de 100 colunas:** some o painel de membros e identidade (continua
+  em `/who` e `/fp`).
+- **Menos de 64 colunas:** some também a lista de janelas, e a conversa
+  ocupa a largura toda. A barra do topo vira a lista de janelas: a atual
+  primeiro, depois as outras, com as não lidas. Um toque ou clique nela
+  abre o seletor, que também está no menu em *Janelas abertas* e em
+  `Ctrl+N` / `Ctrl+P`. Prompt, dicas e coluna de nick ficam mais curtos.
+
 ### Comandos
 
 Tudo o que o menu faz também existe como comando:
