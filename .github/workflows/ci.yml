@@ -15,3 +15,21 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
       - run: python -m crptochat.selftest
+      # the version never goes back: against the base of a PR, and against the previous
+      # commit of a push (catches e.g. a conflict resolved to the lower of two bumps)
+      - name: Versão não volta atrás
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then
+            ref="$BASE_REF"
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            ref="$BEFORE"
+          else
+            echo "nada para comparar"; exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$ref"
+          python packaging/check_version.py FETCH_HEAD

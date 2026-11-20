@@ -935,8 +935,20 @@ class ChatApp(App):
         """On a phone the top bar is the window list: status, the current window
         and the others with unread counts; touching it opens the window picker."""
         width = self.width_now()
-        right = Text.assemble(("● ", dot), (label[:3] if label != "ONLINE" else "ON", f"bold {dot}"),
-                              (" ☰", f"bold {MAGENTA}"))
+        right = Text()
+        # the same badges as the wide bar, short: who you are here and how the link is protected
+        if self.client.guest:
+            right.append("ANÔN ", style=f"bold {ORANGE}")
+        if self.client.role in ("admin", "mod"):
+            right.append("★ " if self.client.role == "admin" else "☆ ", style=f"bold {ORANGE}")
+        if self.client.away:
+            right.append("AUS ", style=f"bold {YELLOW}")
+        if self.update_info:
+            right.append("↑ ", style=f"bold {GREEN}")
+        secure = self.client.tls or getattr(self.client, "external_tls", False)
+        right.append_text(Text.assemble(
+            ("● ", dot), (label[:3] if label != "ONLINE" else "ON", f"bold {dot}"), " ",
+            ("TLS" if secure else "S/TLS", GREEN if secure else YELLOW), ("·E2EE", GREEN), (" ☰", f"bold {MAGENTA}")))
         tabs = Text(" ")
         names = self.window_names()
         cur = names.index(self.current) if self.current in names else 0

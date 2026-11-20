@@ -98,3 +98,28 @@ def test_layout_follows_the_width(home):
             await type_line(pilot, "/quit")
         await world.stop()
     asyncio.run(main())
+
+
+def test_phone_top_bar_keeps_who_you_are_and_how_the_link_is_protected(home):
+    async def main():
+        world = World(home)
+        app = await world.start(guest=True)
+        async with app.run_test(size=(48, 30)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await pilot.pause(0.05)
+            top = str(app.query_one("#topbar").render())
+            assert "ANÔN" in top                                  # anonymous session
+            assert "S/TLS·E2EE" in top and "ON" in top             # this test server has no TLS
+            assert top.rstrip().endswith("☰") and len(top.rstrip("\n")) <= 48
+
+            app.client.role, app.client.away = "admin", True
+            app.client.tls = True                                  # what a TLS connection shows
+            app.update_info = {"version": "9.9.9"}
+            app.render_topbar()
+            top = str(app.query_one("#topbar").render())
+            assert "★" in top and "AUS" in top and "↑" in top and "TLS·E2EE" in top and "S/TLS" not in top
+            assert "◈ console" in top                              # the current window is still there
+            app.client.role, app.client.away, app.client.tls, app.update_info = "user", False, False, None
+            await type_line(pilot, "/quit")
+        await world.stop()
+    asyncio.run(main())
