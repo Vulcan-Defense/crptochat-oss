@@ -44,7 +44,7 @@ jobs:
       - run: |
           python -m venv /tmp/audit
           /tmp/audit/bin/pip install -q --upgrade pip
-          /tmp/audit/bin/pip install -q . pip-audit
+          /tmp/audit/bin/pip install -q ".[web]" pip-audit
           # audits what the project actually installs (crptochat itself is not on PyPI: skipped)
           /tmp/audit/bin/pip-audit --skip-editable --progress-spinner off
 

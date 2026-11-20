@@ -279,6 +279,46 @@ por destinatário), `mail_per_sender` (50 de um mesmo remetente para um mesmo
 destinatário) e `prekey_fetch_per_hour` (30 pacotes de prekeys por usuário
 por hora, para ninguém esgotar as chaves de uso único dos outros).
 
+### Entrada WebSocket (para o cliente de navegador)
+
+O navegador não abre socket TCP, então o servidor pode aceitar também
+conexões **WebSocket**. É o mesmo protocolo: cada mensagem de texto do
+WebSocket carrega um frame JSON (a linha, sem a quebra), e a conexão cai no
+mesmo tratamento das conexões TCP. Autenticação, limites anti-flood, banimentos
+e filas valem igual, e o servidor continua só repassando blobs cifrados de
+ponta a ponta. Fica **desligada** sem `--ws-port` e precisa do pacote
+`websockets` (`pip install 'crptochat[web]'`; a imagem Docker já traz).
+
+```sh
+# atrás de um proxy reverso com TLS (Caddy, nginx) que encaminha wss:// para cá
+crptochat-server --ws-port 7778 --ws-origin https://app.exemplo.org
+
+# ou falando TLS direto, com certificado de CA pública (ex.: Let's Encrypt)
+crptochat-server --ws-host 0.0.0.0 --ws-port 7778 --ws-origin https://app.exemplo.org \
+  --ws-cert /etc/letsencrypt/live/HOST/fullchain.pem --ws-key /etc/letsencrypt/live/HOST/privkey.pem
+```
+
+- **Origem obrigatória:** só páginas das origens em `--ws-origin` conectam
+  (comparação exata; pode repetir a opção). Sem `Origin` ou com outra, a
+  resposta é HTTP 403. Assim nenhum outro site consegue abrir uma conexão com
+  o navegador de quem o visita.
+- **TLS:** o navegador não aceita o certificado autoassinado que o terminal
+  fixa por fingerprint, então o WebSocket precisa de certificado de CA
+  pública: ou num proxy reverso (aí o WebSocket sem TLS **só** escuta em
+  loopback, o padrão `127.0.0.1`), ou direto com `--ws-cert`/`--ws-key`.
+- **Endereço do cliente:** atrás do proxy, os limites por endereço e os
+  banimentos usam o **último** item de `X-Forwarded-For` (o que o proxy
+  escreveu), aceito só de conexões vindas de loopback. Configure o proxy para
+  substituir esse cabeçalho, não acrescentar ao que o navegador mandar.
+- **Frames:** só mensagens de texto, uma linha por mensagem, até 256 KiB, sem
+  compressão; binário, quebra de linha ou tamanho acima disso encerram a
+  conexão.
+
+Esta é a primeira etapa do cliente de navegador. O cliente em si (o crptochat
+rodando no navegador) virá em separado e **não** será servido por este
+servidor: a página precisa vir de outro lugar, porque quem serve o código do
+cliente web consegue trocá-lo.
+
 ## Cliente
 
 ```bash
