@@ -2,7 +2,7 @@
 # Entrada do comando forçado SSH na VM (tag vX.Y.Z em SSH_ORIGINAL_COMMAND). packaging/DEPLOY.md
 set -eu
 
-DEPLOY_ENV=/etc/crptochat/deploy.env
+DEPLOY_ENV=${CRPTOCHAT_DEPLOY_ENV:-/etc/crptochat/deploy.env}
 if [ -f "$DEPLOY_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -164,6 +164,14 @@ repo_version() {
   sed -n 's/^__version__ = "\([0-9][0-9.]*\)".*/\1/p' "$REPO_DIR/crptochat/__init__.py" | head -n 1
 }
 
+# What the site publishes must be readable by the web server: the downloads run
+# with umask 077 (curl, tar and mkdir would leave 600/700). Set before the move
+# into place, so nothing is ever published unreadable.
+site_perms() {
+  find "$1" -type d -exec chmod 755 {} +
+  find "$1" -type f -exec chmod 644 {} +
+}
+
 publish_begin() {
   src=$1
   dest=$2
@@ -297,15 +305,12 @@ sync_web_from_release() {
     rm -rf "$stage"
     fail "falha ao baixar ${WEB_TARBALL}"
   fi
-  PYTHONPATH="$REPO_DIR" python3 -c "
-from pathlib import Path
-import sys
-sys.path.insert(0, '${REPO_DIR}/packaging')
-from deploy_lib import verify_downloaded_assets
-verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
-" || { rm -rf "$stage"; fail "SHA-256 de ${WEB_TARBALL} inválido"; }
+  py_deploy verify-assets --manifest "${manifest_dir}/RELEASE" --dir "$stage" --only "$WEB_TARBALL" \
+    || { rm -rf "$stage"; fail "SHA-256 de ${WEB_TARBALL} inválido"; }
   mkdir -p "${stage}/web"
   tar -xzf "${stage}/${WEB_TARBALL}" -C "${stage}/web"
+  [ -d "${stage}/web/dist" ] || { rm -rf "$stage"; fail "${WEB_TARBALL} sem dist/"; }
+  site_perms "${stage}/web/dist"
   publish_begin "${stage}/web/dist" "${SITE_ROOT}/web"
   rm -rf "$stage"
   log "cliente web em ${SITE_ROOT}/web"
@@ -316,13 +321,8 @@ sync_release_downloads() {
   manifest_dir=$2
   stage=$(mktemp -d)
   cp "${manifest_dir}/RELEASE" "${manifest_dir}/RELEASE.sig" "$stage/"
-  assets=$(PYTHONPATH="$REPO_DIR" python3 -c "
-from pathlib import Path
-from crptochat import update
-info = update.parse_manifest(Path('${manifest_dir}/RELEASE').read_bytes())
-names = [n for n in sorted(info['files']) if n != '${WEB_TARBALL}']
-print(' '.join(names))
-")
+  assets=$(py_deploy list-assets --manifest "${manifest_dir}/RELEASE" --except "$WEB_TARBALL")
+  [ -n "$assets" ] || { rm -rf "$stage"; fail "RELEASE sem arquivos para downloads"; }
   for name in $assets; do
     if ! curl -fsSL --max-time 600 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${name}" \
       -o "${stage}/${name}"; then
@@ -330,13 +330,11 @@ print(' '.join(names))
       fail "falha ao baixar ${name}"
     fi
   done
-  PYTHONPATH="$REPO_DIR" python3 -c "
-from pathlib import Path
-import sys
-sys.path.insert(0, '${REPO_DIR}/packaging')
-from deploy_lib import verify_downloaded_assets
-verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
-" || { rm -rf "$stage"; fail "verificação de binários falhou"; }
+  only=""
+  for name in $assets; do only="$only --only $name"; done
+  # shellcheck disable=SC2086
+  py_deploy verify-assets --manifest "${manifest_dir}/RELEASE" --dir "$stage" $only \
+    || { rm -rf "$stage"; fail "verificação de binários falhou"; }
   mkdir -p "${DEPLOY_TMP}/downloads.merge"
   if [ -d "${SITE_ROOT}/downloads" ]; then
     cp -a "${SITE_ROOT}/downloads/." "${DEPLOY_TMP}/downloads.merge/"
@@ -344,6 +342,7 @@ verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
   for name in $assets RELEASE RELEASE.sig; do
     cp "${stage}/${name}" "${DEPLOY_TMP}/downloads.merge/${name}"
   done
+  site_perms "${DEPLOY_TMP}/downloads.merge"
   publish_begin "${DEPLOY_TMP}/downloads.merge" "${SITE_ROOT}/downloads"
   rm -rf "$stage"
   log "downloads em ${SITE_ROOT}/downloads"
@@ -399,7 +398,8 @@ health_check() {
     log "health: banner relay v${version} ausente nos logs"
     return 1
   fi
-  probe_out=$(PYTHONPATH="$REPO_DIR" python3 -m crptochat.selftest --probe 127.0.0.1:7777 2>&1) || true
+  # from inside the repo: `python3 -m` puts the current directory first on sys.path
+  probe_out=$(cd "$REPO_DIR" && PYTHONPATH="$REPO_DIR" python3 -m crptochat.selftest --probe 127.0.0.1:7777 2>&1) || true
   fp=$(printf '%s' "$probe_out" | sed -n 's/.*fingerprint //p' | head -n 1)
   if [ -z "$fp" ]; then
     log "health: fingerprint TLS não obtida"
@@ -476,18 +476,26 @@ main() {
   [ -n "$pin_before" ] || fail "PIN TLS desconhecido"
 
   snapshot_create
-
+  # The body runs as a plain command, never under ||, &&, if or !: in dash (the
+  # VM's /bin/sh) a function called in such a context runs with set -e ignored
+  # all the way down, even after its own `set -e`, so a failing step would go
+  # unnoticed. set +e only around the call, to catch the status here.
+  set +e
   deploy_body "$new_tag" "$commit" "$pin_before" "$manifest_dir"
   rc=$?
+  set -e
   if [ "$rc" -eq 0 ]; then
     publish_discard_prevs
     exit 0
   fi
+  # best effort: every step of the restore runs even if one of them fails
+  set +e
   capture_container_diagnostics "$CONTAINER"
   snapshot_restore
+  set -e
   case "$rc" in
-    2) fail "PIN TLS inesperado" ;;
-    *) fail "deploy falhou (rc=${rc})" ;;
+    2) fail "PIN TLS inesperado (estado anterior restaurado)" ;;
+    *) fail "deploy falhou (rc=${rc}); estado anterior restaurado" ;;
   esac
 }
 

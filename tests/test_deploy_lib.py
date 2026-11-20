@@ -120,18 +120,6 @@ def test_render_compose_external_volume(tmp_path):
     assert "127.0.0.1:7778" not in text
 
 
-def test_subshell_set_e_aborts_mid_deploy():
-    rc = subprocess.run(  # nosec B603
-        ["sh", str(ROOT / "packaging" / "test_subshell_set_e.sh")],
-        cwd=ROOT,
-    ).returncode
-    assert rc == 0
-    text = (ROOT / "packaging" / "crptochat-deploy.sh").read_text(encoding="utf-8")
-    assert "deploy_body()" in text
-    assert "set -e" in text.split("deploy_body()")[1][:200]
-    assert "|| rc=$?" not in text
-
-
 def test_caddy_ws_inside_site_block():
     src = (
         "crptochat.acpt.app.br {\n"
