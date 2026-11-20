@@ -50,5 +50,5 @@ def test_bootstrap_matches_vm():
     assert "DESFAZER.sh" in text
     assert "HAD_ENV" in text
     assert "PIN TLS vazio" in text
-    assert "network connect crptochat" in text
-    assert "|| true" not in text.split("network connect")[1].split("\n")[0]
+    assert "NETWORK=crptochat" in text and 'network connect "$NETWORK"' in text
+    assert "|| true" not in text.split('network connect "$NETWORK"')[1].split("\n")[0]

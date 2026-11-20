@@ -13,7 +13,7 @@ dependencies = ["cryptography>=42", "textual>=1.0", "certifi>=2024.2.2"]
 
 [project.optional-dependencies]
 web = ["websockets>=15"]
-dev = ["pytest>=8", "websockets>=15"]
+dev = ["pytest>=8", "websockets>=15", "pyyaml>=6"]
 
 [project.scripts]
 crptochat = "crptochat.cli:main"
