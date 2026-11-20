@@ -34,6 +34,9 @@ jobs:
         run: python web/fetch_vendor.py
       - name: Dependências do build e do teste (ws e playwright, travadas no package-lock)
         run: cd web && npm ci --no-audit --no-fund --ignore-scripts
+      # build/test-only npm packages (nothing reaches the page), audited like pip-audit does for Python
+      - name: Auditoria das dependências npm
+        run: cd web && npm audit --package-lock-only --audit-level=moderate
       - name: crptochat (o servidor do teste ponta a ponta) e o Chromium do Playwright
         run: |
           pip install -e ".[web]"
