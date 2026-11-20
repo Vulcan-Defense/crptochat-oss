@@ -1,7 +1,8 @@
 name: web
 # Builds the browser client (web/) the way it is published and checks it:
 # every vendored file against vendor.lock.json, the precompiled bytecode under
-# Pyodide (web/smoke.mjs), and that the build is deterministic.
+# Pyodide (web/smoke.mjs), the page end to end in Chromium against a real server
+# (web/e2e.mjs), and that the build is deterministic.
 #
 # What "two builds, same bytes" proves here: the build is deterministic on THIS
 # runner (no timestamps, ordering or randomness leaking into the output). It does
@@ -31,8 +32,12 @@ jobs:
           node-version: "22.12.0"
       - name: Baixar e conferir o vendor
         run: python web/fetch_vendor.py
-      - name: Dependência do build (ws, travada no package-lock)
+      - name: Dependências do build e do teste (ws e playwright, travadas no package-lock)
         run: cd web && npm ci --no-audit --no-fund --ignore-scripts
+      - name: crptochat (o servidor do teste ponta a ponta) e o Chromium do Playwright
+        run: |
+          pip install -e ".[web]"
+          cd web && npx --no-install playwright install --with-deps chromium
       - name: Build
         run: |
           python --version
@@ -41,6 +46,8 @@ jobs:
           cp web/dist/SHA256SUMS /tmp/sums-1
       - name: Smoke test do build (Pyodide no Node)
         run: node web/smoke.mjs
+      - name: Ponta a ponta no Chromium (criar chave, backup, entrar, restaurar; navegador antigo)
+        run: node web/e2e.mjs
       - name: Build determinístico (dois builds, mesmos bytes)
         run: |
           python web/build.py
