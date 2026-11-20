@@ -33,13 +33,18 @@ def open_identity(nick: str, passphrase: str):
     return Identity.create(nick, passphrase), True
 
 
-async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = False) -> str:
-    """Runs the chat until it ends; returns why it ended (for the page)."""
+def prepare() -> None:
+    """Environment for everything below (keys on the login page included)."""
     os.environ["CRPTOCHAT_HOME"] = HOME
     os.environ.setdefault("TERM", "xterm-256color")
     os.environ.setdefault("COLORTERM", "truecolor")
     os.makedirs(HOME, mode=0o700, exist_ok=True)
     asyncio.to_thread = _inline
+
+
+async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = False) -> str:
+    """Runs the chat until it ends; returns why it ended (for the page)."""
+    prepare()
     driver.TERMINAL = terminal
 
     host, port, tls = check_url(url)

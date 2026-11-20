@@ -15,7 +15,8 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
 | Peça | Onde |
 |---|---|
 | Python 3.14 + `cryptography` 47 em WebAssembly | `vendor/pyodide/` (Pyodide 314.0.8) |
-| Textual, Rich e dependências (wheels puros) | `vendor/wheels/` |
+| Textual, Rich e dependências (wheels puros) | `vendor/wheels/`, entregues já compilados em `py/site.zip.gz` |
+| Python pré-compilado (bytecode) | `py/` no `dist/`, gerado por `precompile.mjs` |
 | Terminal na página | `vendor/xterm/` (xterm.js 6) |
 | Driver do Textual para o xterm.js | `py/crptoweb/driver.py` |
 | Conexão por WebSocket no lugar do TCP | `py/crptoweb/net.py` |
@@ -55,18 +56,100 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   cifra de ponta a ponta continua valendo, e uma troca da chave de um contato
   aparece como mudança de fingerprint. Na interface aparece "TLS" para
   `wss://`.
-- **`build.py`** gera `dist/`, que é o site estático:
-  - `app.zip` é determinístico (datas e ordem fixas) e leva `crptochat/` (sem
-    os módulos do servidor) e `crptoweb/`;
-  - `SHA256SUMS` lista todos os arquivos.
+- **`build.py`** gera `dist/`, que é o site estático. O Python chega **já
+  compilado**: `precompile.mjs` roda o próprio Python do Pyodide no Node,
+  então é a mesma versão e o mesmo bytecode da página. Os `.pyc` são "unchecked
+  hash" (PEP 552), sem data e sem conferir a fonte, e não vai fonte junto
+  (tracebacks ficam sem as linhas de código):
+  - `py/python_stdlib.zip`: só a parte da stdlib que a página importa antes do
+    login (1,9 MB em vez de 4,5);
+  - `py/site.zip.gz`: Textual, Rich…, `crptochat/` (sem os módulos do servidor)
+    e `crptoweb/`;
+  - `py/stdlib-rest.zip.gz` e `py/later.zip.gz` (Pygments, só para colorir
+    código): baixados em segundo plano enquanto a pessoa digita. O chat só começa
+    depois que chegaram, então nunca falta módulo.
+  
+  Os `.zip.gz` são zips sem compressão interna e comprimidos inteiros. Ficam
+  menores e o navegador descomprime nativamente (`DecompressionStream`), sem
+  depender de o host comprimir `.zip`.
+- **Build determinístico; reprodutível ainda a provar:** datas, ordem e
+  bytecode fixos. O CI (`.github/workflows/web.yml`, check "web") builda duas
+  vezes no mesmo runner e compara o `SHA256SUMS`, e roda `smoke.mjs`, que
+  carrega o `dist/` como a página faz. Isso prova **determinismo** (nada de data,
+  ordem ou acaso no resultado), **não** que outra máquina chega aos mesmos bytes.
+  Para que isso seja verificável, a toolchain está fixada:
+  - Python 3.12.8 e Node 22.12.0 no CI;
+  - Pyodide e cada pacote por hash no `vendor.lock.json`;
+  - `ws` no `package-lock.json`.
+  
+  O job imprime o `SHA256SUMS`. Quem quiser conferir builda o mesmo commit com
+  as mesmas versões e compara. O bytecode vem do Python do Pyodide (wasm), não
+  do Python da máquina, o que ajuda, mas só uma segunda máquina prova.
+- **Cada build no seu caminho:** tudo menos `index.html` e `sw.js` fica em
+  `b/<id do build>/`, e o id é o hash de todos os arquivos. Uma página só pede
+  arquivos do próprio build, então nunca mistura builds: no pior caso recebe
+  404, se o host já trocou de build. Os arquivos de `b/` nunca mudam e podem ir
+  com cache longo (`Cache-Control: immutable`); `index.html` e `sw.js` não.
+- **Service worker (`sw.js`):** guarda os arquivos **deste build** num cache
+  com o id do build. Da segunda visita em diante a página abre sem baixar nada,
+  e funciona até offline. Um build novo traz um `sw.js` novo, que assume na
+  hora e apaga o cache antigo. A página aberta do build antigo:
+  - **recarrega** se estiver parada na tela de login (sem senha digitada);
+  - senão, mostra "há uma versão nova", e segue no build dela.
+  
+  Depois que o chat abre, a página não precisa de mais nada da rede. Só
+  arquivos do build passam pelo cache; o WebSocket não.
+- **Navegador antigo:** sem `DecompressionStream` (Safari antes do 16.4),
+  `WebAssembly` ou `IndexedDB`, a página diz qual falta e a versão mínima, em
+  vez de quebrar depois.
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
+
+## Chaves e cofres de senha
+
+O navegador não roda `pass`, `secret-tool` nem `vault` como o terminal. A
+integração passa então pelo que os cofres já fazem no navegador:
+
+- **Senha da chave no gerenciador de senhas.** O formulário segue o que os
+  gerenciadores procuram: nick como usuário, `current-password` para entrar,
+  `new-password` com confirmação ao criar uma chave (aí eles oferecem gerar uma
+  senha forte). Funciona com o gerenciador do Chrome, o iCloud Keychain, e com
+  Bitwarden, 1Password e KeePassXC pela extensão. **Pedir para guardar** a
+  senha (Credential Management API, só no Chromium) é **opt-in**: a caixa
+  "pedir ao navegador para guardar esta senha" vem desmarcada. Senha e backup da
+  chave no mesmo gerenciador deixam o gerenciador como a única proteção. O
+  navegador ou a extensão também podem oferecer por conta própria; a página
+  avisa que basta recusar.
+- **A chave no cofre, para backup e para levar entre aparelhos.** "Exportar /
+  backup" dá o **mesmo blob** que o terminal guarda no cofre: a semente Ed25519
+  já cifrada com a senha (scrypt + ChaCha20-Poly1305, presa ao nick). Ele é
+  baixado como arquivo ou copiado, e vai no gerenciador como nota segura ou
+  anexo, ou no `pass insert -m crptochat/NICK`. "Importar chave" aceita
+  esse blob, o arquivo `~/.config/crptochat/NICK.json` do terminal ou a saída
+  de `pass show crptochat/NICK`. A senha é conferida no navegador antes de
+  guardar. Uma chave diferente para o mesmo nick só é substituída se a pessoa
+  marcar "substituir" **e** confirmar num segundo passo, que diz que a chave
+  atual será apagada de vez e oferece exportá-la antes. Se a chave importada
+  for a mesma que já está aqui, nada é apagado e não há confirmação.
+- **Backup obrigatório ao criar uma chave:** antes de abrir o chat aparece o
+  painel de backup, porque a chave existe só naquele navegador. No iPhone o
+  Safari pode apagar os dados do site.
+
+Quem pegar o blob ainda precisa da senha. Guardar os dois no mesmo cofre deixa
+o cofre como a única proteção, igual a usar `--pass-cmd` no terminal.
+
+Ainda não: desbloquear com Face ID ou digital (passkey com a extensão PRF do
+WebAuthn), e mover a chave por dentro do chat (o "Mover minha chave" do menu
+chama programas locais e não funciona no navegador).
 
 ## Rodar localmente
 
 ```sh
 python3 web/fetch_vendor.py          # baixa e confere web/vendor/ (~19 MB)
+(cd web && npm ci)                   # o build roda o Pyodide no Node (precisa do Node 18+)
 python3 web/build.py                 # gera web/dist/
+node web/smoke.mjs                   # opcional: confere o build (Pyodide no Node)
+node web/e2e.mjs                     # opcional: ponta a ponta no Chromium (precisa do crptochat instalado)
 
 # servidor com a entrada WebSocket, aceitando a página servida em localhost:8123
 crptochat-server --no-tls --ws-port 7778 --ws-origin http://localhost:8123
@@ -84,14 +167,25 @@ Testado com Chromium headless (Playwright), contra um servidor local:
 
 | | Resultado |
 |---|---|
-| Carregamento no desktop (sem limitação) | **~5 s** até o botão "entrar" (Pyodide 2,3 s · pacotes 0,6 s · imports 2 s) |
+| Carregamento no desktop (sem limitação) | **~1,5 s** até o botão "entrar" (era ~5 s antes do bytecode pré-compilado) |
 | Login até ONLINE | < 1 s |
 | DM navegador → terminal e terminal → navegador | **funciona**, cifrada de ponta a ponta, decifrada pelo cliente de terminal de verdade |
 | Chave no IndexedDB | sobrevive a recarregar; senha errada é recusada; a mesma chave é aceita pelo servidor |
 | Memória | ~80 MB de memória do WebAssembly + ~20 MB de heap JS |
-| Tamanho | 18,9 MB sem compressão; **~11,4 MB com gzip** (o wasm cai de 9,6 para 3,5 MB) |
-| Celular emulado (Pixel 7, CPU 4× mais lenta, 4G de 9 Mbit/s) | **42 s** no primeiro acesso, 33 s com cache: o gargalo é CPU (iniciar o Python e importar), não rede |
-| Layout em tela de celular | **quebra**: os painéis laterais têm largura fixa e espremem o chat |
+| Transferido até poder entrar | ~11 MB com gzip (o wasm é 3,5 MB); mais ~4 MB em segundo plano |
+| Celular emulado (Pixel 7, CPU 4× mais lenta), **sem limitar a rede** | **22,8 s → 7,2 s** |
+| Celular emulado, CPU 4× + **4G de 9 Mbit/s**, primeiro acesso | **42 s → 14,5 s** (agora limitado pela banda) |
+| Idem, **visitas seguintes** (service worker) | **33 s → 6,1 s**, sem baixar nada |
+| Layout em tela de celular | resolvido no PR da TUI estreita (#21) |
+
+De onde veio o ganho, no perfil com CPU 4× (`imports` é o `import` do
+crptochat e do Textual):
+
+| Fase | Antes | Depois |
+|---|---|---|
+| iniciar o Python | 10,5 s | 3,1 s (stdlib já compilada) |
+| imports | ~10 s | ~2,2 s (bytecode pronto) |
+| pacotes | 2,9 s | 1,0 s (só o `cryptography`; o resto vem no `site.zip.gz`) |
 
 Achado que virou correção no cliente principal: o `cryptography` do Pyodide
 tem o módulo ML-KEM, mas o OpenSSL dele não tem o algoritmo. O
@@ -110,19 +204,17 @@ já trata isso com os outros clientes.
 
 ## Próximos passos
 
-1. **Velocidade no celular.** O objetivo é abaixo de 10 s num aparelho médio:
-   - snapshot de memória do Pyodide (carregar o Python já inicializado);
-   - `.pyc` pré-compilados no `app.zip`;
-   - imports preguiçosos;
-   - uma `python_stdlib.zip` só com o necessário;
-   - service worker com cache.
-2. **Layout estreito na TUI.** Abaixo de ~80 colunas, esconder os painéis
-   laterais (abrir pelo menu). Isso melhora também o terminal pequeno.
+1. **Velocidade** (o que falta): medir num celular de verdade. Se ainda pesar,
+   os próximos passos são o snapshot de memória do Pyodide (API privada,
+   experimental; carregaria o Python já inicializado, guardado no aparelho
+   depois da primeira visita) e diminuir o primeiro download, que hoje é
+   limitado pela banda.
+2. ~~Layout estreito na TUI~~: PR #21.
 3. **Publicação** (só com isto pronto):
-   - build reproduzível no CI;
+   - ~~build reproduzível no CI~~ (`web.yml`);
    - manifesto assinado na release;
    - hospedagem fora do servidor do chat;
    - monitor externo comparando o que é servido com a release;
    - página "verificar esta instalação".
-4. Backup da identidade (arquivo cifrado ou QR) e aviso de "adicione à tela
-   inicial" no iOS antes de criar a chave.
+4. Aviso de "adicione à tela inicial" no iOS antes de criar a chave, e
+   desbloqueio por passkey (PRF) como atalho opcional.
