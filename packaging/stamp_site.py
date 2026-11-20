@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Substitui __VERSION__ nas páginas estáticas do site pela versão do pacote."""
+"""Substitui __VERSION__ e __PIN__ nas páginas estáticas do site."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_RE = re.compile(r'^__version__ = "(\d+(?:\.\d+){1,3})"$', re.M)
-PLACEHOLDER = "__VERSION__"
 
 
 def read_version(init_py: Path) -> str:
@@ -21,32 +20,42 @@ def read_version(init_py: Path) -> str:
     return m.group(1)
 
 
-def stamp_file(path: Path, version: str) -> bool:
+def stamp_file(path: Path, *, version: str | None = None, pin: str | None = None) -> bool:
     text = path.read_text(encoding="utf-8")
-    if PLACEHOLDER not in text:
-        return False
-    path.write_text(text.replace(PLACEHOLDER, version), encoding="utf-8")
-    return True
+    changed = False
+    if version is not None and "__VERSION__" in text:
+        text = text.replace("__VERSION__", version)
+        changed = True
+    if pin is not None and "__PIN__" in text:
+        text = text.replace("__PIN__", pin)
+        changed = True
+    if changed:
+        path.write_text(text, encoding="utf-8")
+    return changed
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--init", type=Path, default=ROOT / "crptochat" / "__init__.py")
+    ap.add_argument("--version", help="versão (padrão: crptochat.__version__)")
+    ap.add_argument("--pin", help="fingerprint TLS (SHA-256 hex) para __PIN__")
     ap.add_argument("paths", nargs="*", type=Path,
-                    default=[ROOT / "site" / "downloads" / "index.html"])
+                    default=[ROOT / "site" / "index.html", ROOT / "site" / "downloads" / "index.html"])
     args = ap.parse_args(argv)
-    version = read_version(args.init)
+    version = args.version or read_version(args.init)
     changed = 0
     for path in args.paths:
         if not path.is_file():
             print(f"::error::arquivo ausente: {path}", file=sys.stderr)
             return 1
-        if stamp_file(path, version):
+        if stamp_file(path, version=version, pin=args.pin):
             changed += 1
-            print(f"atualizado {path} -> v{version}")
+            extra = f", pin" if args.pin else ""
+            print(f"atualizado {path} -> v{version}{extra}")
         elif f"v{version}" not in path.read_text(encoding="utf-8"):
-            print(f"::error::{path} não tem {PLACEHOLDER} nem v{version}", file=sys.stderr)
-            return 1
+            if "__VERSION__" in path.read_text(encoding="utf-8"):
+                print(f"::error::{path} ainda tem __VERSION__", file=sys.stderr)
+                return 1
     if not changed:
         print(f"nada a substituir (já v{version})")
     return 0

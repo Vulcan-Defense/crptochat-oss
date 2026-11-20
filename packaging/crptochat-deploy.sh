@@ -3,18 +3,26 @@
 # SSH_ORIGINAL_COMMAND). Instalação: packaging/DEPLOY.md
 set -eu
 
+DEPLOY_ENV=/etc/crptochat/deploy.env
+if [ -f "$DEPLOY_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$DEPLOY_ENV"
+  set +a
+fi
+
 REPO_DIR=${CRPTOCHAT_REPO_DIR:-/opt/crptochat}
 COMPOSE_FILE=${CRPTOCHAT_COMPOSE_FILE:-/opt/crptochat-setup/docker-compose.isolated.yml}
-COMPOSE_PROJECT=${CRPTOCHAT_COMPOSE_PROJECT:-}
+COMPOSE_PROJECT=${CRPTOCHAT_COMPOSE_PROJECT:-crptochat-setup}
 CONTAINER=${CRPTOCHAT_CONTAINER:-crptochat}
 IMAGE=${CRPTOCHAT_IMAGE:-crptochat-server}
-DATA_VOLUME=${CRPTOCHAT_DATA_VOLUME:-crptochat-data}
+DATA_VOLUME=${CRPTOCHAT_DATA_VOLUME:-crptochat-setup_crptochat-data}
 CLIENT_REPO=${CRPTOCHAT_CLIENT_REPO:-hacking-table/crptochat-client}
+SITE_ROOT=${CRPTOCHAT_SITE_ROOT:-/opt/crptochat-site}
 LOG_DIR=${CRPTOCHAT_DEPLOY_LOG_DIR:-/var/log/crptochat}
 STATE_FILE=${CRPTOCHAT_STATE_FILE:-/var/lib/crptochat/deploy.state}
 BACKUP_DIR=${CRPTOCHAT_BACKUP_DIR:-/var/backups/crptochat}
 LOCK_FILE=${CRPTOCHAT_DEPLOY_LOCK:-/var/lock/crptochat-deploy.lock}
-# Chave Ed25519 das releases do cliente (fingerprint SHA256 aae1…3890 no README)
 SIGNING_PUBKEY=${CLIENT_SIGNING_PUBKEY:-UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=}
 SMOKE_TIMEOUT=${CRPTOCHAT_SMOKE_TIMEOUT:-20}
 HEALTH_WAIT=${CRPTOCHAT_HEALTH_WAIT:-20}
@@ -35,12 +43,12 @@ fail() {
   exit 1
 }
 
+py_deploy() {
+  PYTHONPATH="$REPO_DIR" CLIENT_SIGNING_PUBKEY="$SIGNING_PUBKEY" python3 "$REPO_DIR/packaging/deploy_lib.py" "$@"
+}
+
 compose() {
-  if [ -n "$COMPOSE_PROJECT" ]; then
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" --project-directory "$REPO_DIR" "$@"
-  else
-    docker compose -f "$COMPOSE_FILE" --project-directory "$REPO_DIR" "$@"
-  fi
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" --project-directory "$REPO_DIR" "$@"
 }
 
 validate_tag() {
@@ -51,14 +59,12 @@ validate_tag() {
   printf '%s' "$tag"
 }
 
-tag_parts() {
-  printf '%s' "$1" | sed 's/^v//' | tr '.' ' '
-}
-
 tag_gt() {
-  set -- $(tag_parts "$1")
+  a=$(printf '%s' "$1" | sed 's/^v//' | tr '.' ' ')
+  b=$(printf '%s' "$2" | sed 's/^v//' | tr '.' ' ')
+  set -- $a
   a1=$1; a2=$2; a3=${3:-0}
-  set -- $(tag_parts "$2")
+  set -- $b
   b1=$1; b2=$2; b3=${3:-0}
   if [ "$a1" -gt "$b1" ]; then return 0; fi
   if [ "$a1" -lt "$b1" ]; then return 1; fi
@@ -94,24 +100,54 @@ ensure_volume() {
   fi
 }
 
-git_sync_tag() {
+seed_state_if_missing() {
+  if [ -f "$STATE_FILE" ] && [ -n "${prev_tag:-}" ]; then
+    return 0
+  fi
+  running=$(docker inspect --format '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)
+  [ "$running" = true ] || fail "primeiro deploy: falta ${STATE_FILE} e o contêiner ${CONTAINER} não está rodando"
+  pin=$(tls_pin_from_logs)
+  [ -n "$pin" ] || fail "primeiro deploy: PIN TLS não encontrado nos logs"
+  version=$(docker exec "$CONTAINER" python -c "from crptochat import __version__; print(__version__)" 2>/dev/null) \
+    || fail "primeiro deploy: não foi possível ler __version__ do contêiner"
+  prev_tag="v${version}"
+  tls_pin=$pin
+  log "inicializando deploy.state a partir do contêiner: tag=${prev_tag}"
+  write_state "$prev_tag" "$pin"
+}
+
+download_release_manifest() {
   tag=$1
+  dest=$2
+  mkdir -p "$dest"
+  for name in RELEASE RELEASE.sig; do
+    if ! curl -fsSL --max-time 120 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${name}" \
+      -o "${dest}/${name}"; then
+      fail "não foi possível baixar ${name} da release ${tag}"
+    fi
+  done
+}
+
+verify_release_precheck() {
+  tag=$1
+  manifest_dir=$2
+  py_deploy verify-release --tag "$tag" \
+    --manifest "${manifest_dir}/RELEASE" \
+    --sig "${manifest_dir}/RELEASE.sig" \
+    --repo "$REPO_DIR" \
+    --pubkey "$SIGNING_PUBKEY" >"${manifest_dir}/verified.txt" \
+    || fail "verificação RELEASE/git falhou"
+  sed -n 's/^commit=//p' "${manifest_dir}/verified.txt"
+}
+
+git_sync_commit() {
+  commit=$1
   (
     umask 022
     cd "$REPO_DIR"
-    git fetch --quiet --tags origin
     git fetch --quiet origin main
-    git -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
-    git reset --hard "refs/tags/$tag"
-  )
-}
-
-tag_on_main() {
-  tag=$1
-  (
-    cd "$REPO_DIR"
-    git fetch --quiet origin main
-    git merge-base --is-ancestor "refs/tags/$tag" FETCH_HEAD
+    git -c advice.detachedHead=false checkout --quiet "$commit"
+    git reset --hard "$commit"
   )
 }
 
@@ -119,21 +155,98 @@ repo_version() {
   sed -n 's/^__version__ = "\([0-9][0-9.]*\)".*/\1/p' "$REPO_DIR/crptochat/__init__.py" | head -n 1
 }
 
-verify_release() {
+sync_compose_file() {
+  py_deploy render-compose \
+    --template "$REPO_DIR/docker-compose.isolated.yml" \
+    --out "$COMPOSE_FILE" \
+    --volume "$DATA_VOLUME"
+  log "compose em ${COMPOSE_FILE}"
+}
+
+build_web_dist() {
+  (
+    umask 022
+    cd "$REPO_DIR"
+    if [ ! -d web/node_modules/ws ]; then
+      (cd web && npm ci)
+    fi
+    if [ ! -f web/vendor/manifest.json ]; then
+      python3 web/fetch_vendor.py
+    fi
+    python3 web/build.py
+  )
+}
+
+publish_dir() {
+  src=$1
+  dest=$2
+  parent=$(dirname "$dest")
+  base=$(basename "$dest")
+  new="${parent}/.${base}.new.$$"
+  prev="${parent}/.${base}.prev.$$"
+  rm -rf "$new"
+  cp -a "$src" "$new"
+  if [ -e "$dest" ]; then
+    rm -rf "$prev"
+    mv "$dest" "$prev"
+  fi
+  mv "$new" "$dest"
+  rm -rf "$prev" 2>/dev/null || true
+}
+
+sync_site_pages() {
+  pin=$1
+  manifest_dir=$2
+  mkdir -p "${SITE_ROOT}/downloads"
+  tmpi=$(mktemp)
+  tmpd=$(mktemp)
+  version=$(sed -n 's/^version=//p' "${manifest_dir}/verified.txt")
+  cp "$REPO_DIR/site/index.html" "$tmpi"
+  cp "$REPO_DIR/site/downloads/index.html" "$tmpd"
+  python3 "$REPO_DIR/packaging/stamp_site.py" --version "$version" --pin "$pin" "$tmpi" "$tmpd"
+  mv -f "$tmpi" "${SITE_ROOT}/index.html"
+  mv -f "$tmpd" "${SITE_ROOT}/downloads/index.html"
+  log "páginas HTML em ${SITE_ROOT}"
+}
+
+sync_web_client() {
+  publish_dir "$REPO_DIR/web/dist" "${SITE_ROOT}/web"
+  log "cliente web em ${SITE_ROOT}/web"
+}
+
+sync_release_downloads() {
   tag=$1
-  tmp=$(mktemp -d)
+  manifest_dir=$2
+  stage=$(mktemp -d)
   # shellcheck disable=SC2064
-  trap "rm -rf '$tmp'" RETURN
-  for name in RELEASE RELEASE.sig; do
-    if ! curl -fsSL --max-time 60 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${name}" \
-      -o "${tmp}/${name}"; then
-      fail "não foi possível baixar ${name} da release ${tag}"
+  trap "rm -rf '$stage'" RETURN
+  cp "${manifest_dir}/RELEASE" "${manifest_dir}/RELEASE.sig" "$stage/"
+  assets=$(PYTHONPATH="$REPO_DIR" python3 -c "
+from pathlib import Path
+from crptochat import update
+info = update.parse_manifest(Path('${manifest_dir}/RELEASE').read_bytes())
+print(' '.join(sorted(info['files'])))
+")
+  for name in $assets; do
+    if ! curl -fsSL --max-time 600 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${name}" \
+      -o "${stage}/${name}"; then
+      fail "falha ao baixar ${name}"
     fi
   done
-  CLIENT_SIGNING_PUBKEY="$SIGNING_PUBKEY" PYTHONPATH="$REPO_DIR" \
-    python3 -m crptochat.update verify "${tmp}/RELEASE" "${tmp}/RELEASE.sig" \
-    || fail "assinatura RELEASE inválida para ${tag}"
-  log "release ${tag} assinada conferida"
+  PYTHONPATH="$REPO_DIR" python3 -c "
+from pathlib import Path
+import sys
+sys.path.insert(0, '${REPO_DIR}/packaging')
+from deploy_lib import verify_downloaded_assets
+verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
+"
+  mkdir -p "${SITE_ROOT}/downloads"
+  for name in $assets RELEASE RELEASE.sig; do
+    tmp="${SITE_ROOT}/downloads/.${name}.new.$$"
+    cp "${stage}/${name}" "$tmp"
+    mv -f "$tmp" "${SITE_ROOT}/downloads/${name}"
+  done
+  log "artefatos da release em ${SITE_ROOT}/downloads"
 }
 
 backup_data() {
@@ -182,19 +295,65 @@ health_check() {
   [ "$running" = true ] && [ "$restarts" = 0 ] || return 1
 }
 
+deploy_release() {
+  tag=$1
+  commit=$2
+  pin_before=$3
+  manifest_dir=$4
+
+  backup_data "$tag"
+  git_sync_commit "$commit"
+  version=$(repo_version)
+  [ -n "$version" ] || fail "versão em __init__.py não encontrada"
+
+  sync_compose_file
+  build_web_dist
+  sync_web_client
+  sync_site_pages "$pin_before" "$manifest_dir"
+  sync_release_downloads "$tag" "$manifest_dir"
+
+  compose build --quiet
+  smoke_test_image "$version"
+
+  if ! compose up -d; then
+    capture_container_diagnostics "$CONTAINER"
+    return 1
+  fi
+  if ! health_check; then
+    capture_container_diagnostics "$CONTAINER"
+    return 1
+  fi
+  new_pin=$(tls_pin_from_logs)
+  if [ -n "$pin_before" ] && [ -n "$new_pin" ] && [ "$new_pin" != "$pin_before" ]; then
+    log "PIN TLS mudou (${pin_before} -> ${new_pin})"
+    capture_container_diagnostics "$CONTAINER"
+    return 2
+  fi
+  write_state "$tag" "${new_pin:-$pin_before}"
+  log "deploy ${tag} concluído"
+  return 0
+}
+
 rollback_to() {
   tag=$1
+  [ -n "$tag" ] || fail "rollback sem tag anterior"
   log "rollback para ${tag}"
-  git_sync_tag "$tag"
-  compose build --quiet
-  compose up -d
-  health_check || fail "rollback não ficou saudável"
-  pin=$(tls_pin_from_logs)
-  [ -n "$pin" ] || fail "PIN TLS não encontrado após rollback"
-  write_state "$tag" "$pin"
+  rdir=$(mktemp -d)
+  # shellcheck disable=SC2064
+  trap "rm -rf '$rdir'" RETURN
+  download_release_manifest "$tag" "$rdir"
+  commit=$(verify_release_precheck "$tag" "$rdir")
+  pin_before=${tls_pin:-}
+  [ -n "$pin_before" ] || pin_before=$(tls_pin_from_logs)
+  case $(deploy_release "$tag" "$commit" "$pin_before" "$rdir"; echo $?) in
+    0) ;;
+    *) fail "rollback não ficou saudável" ;;
+  esac
 }
 
 main() {
+  py_deploy env-check >/dev/null || fail "deploy.env ou variáveis inválidas"
+
   new_tag=$(validate_tag)
   mkdir -p "$(dirname "$LOCK_FILE")"
   # shellcheck disable=SC3023
@@ -202,6 +361,8 @@ main() {
   flock -n 9 || fail "outro deploy em andamento"
 
   export REPO_DIR
+  read_state
+  seed_state_if_missing
   read_state
   old_tag=${prev_tag:-}
   expected_pin=${tls_pin:-}
@@ -213,44 +374,28 @@ main() {
     fail "recusa downgrade: ${new_tag} é mais antiga que ${old_tag}"
   fi
 
-  verify_release "$new_tag"
-  backup_data "$new_tag"
+  manifest_dir=$(mktemp -d)
+  download_release_manifest "$new_tag" "$manifest_dir"
+  commit=$(verify_release_precheck "$new_tag" "$manifest_dir")
 
-  git_sync_tag "$new_tag"
-  tag_on_main "$new_tag" || fail "a tag ${new_tag} não é ancestral de origin/main"
-
-  version=$(repo_version)
-  [ -n "$version" ] || fail "versão em __init__.py não encontrada"
   pin_before=${expected_pin:-}
   if [ -z "$pin_before" ]; then
     pin_before=$(tls_pin_from_logs)
   fi
 
-  compose build --quiet
-  smoke_test_image "$version"
-
-  if ! compose up -d; then
-    capture_container_diagnostics "$CONTAINER"
-    [ -n "$old_tag" ] && rollback_to "$old_tag"
-    fail "docker compose up falhou"
+  rc=0
+  deploy_release "$new_tag" "$commit" "$pin_before" "$manifest_dir" || rc=$?
+  if [ "$rc" = 0 ]; then
+    exit 0
   fi
-
-  if ! health_check; then
-    capture_container_diagnostics "$CONTAINER"
-    [ -n "$old_tag" ] && rollback_to "$old_tag"
-    fail "health check falhou após compose up"
-  fi
-
-  new_pin=$(tls_pin_from_logs)
-  if [ -n "$pin_before" ] && [ -n "$new_pin" ] && [ "$new_pin" != "$pin_before" ]; then
-    log "PIN TLS mudou (${pin_before} -> ${new_pin}); revertendo"
-    capture_container_diagnostics "$CONTAINER"
+  if [ -n "$old_tag" ] && [ "$old_tag" != "$new_tag" ]; then
     rollback_to "$old_tag"
-    fail "PIN TLS inesperado"
   fi
-
-  write_state "$new_tag" "${new_pin:-$pin_before}"
-  log "deploy ${new_tag} concluído"
+  case "$rc" in
+    1) fail "docker compose up ou health falhou" ;;
+    2) fail "PIN TLS inesperado" ;;
+    *) fail "deploy falhou (rc=${rc})" ;;
+  esac
 }
 
 main
