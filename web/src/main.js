@@ -1,6 +1,7 @@
 // crptochat no navegador: carrega o Python (Pyodide) e o cliente de sempre, e
 // desenha a interface Textual num xterm.js. Tudo vem desta mesma origem
-// (vendor/ e app.zip); nada de CDN, nada de script de terceiros.
+// (b/<build>/vendor e b/<build>/py); nada de CDN, nada de script de terceiros.
+// O Python chega já compilado (py/*.zip, gerados por precompile.mjs no build).
 import { loadPyodide } from "./vendor/pyodide/pyodide.mjs";
 import { Terminal } from "./vendor/xterm/xterm.mjs";
 import { FitAddon } from "./vendor/xterm/addon-fit.mjs";
@@ -20,25 +21,77 @@ async function syncfs(py, populate) {
   return new Promise((ok, fail) => py.FS.syncfs(populate, (err) => (err ? fail(err) : ok())));
 }
 
+// Every file of this build is under the build's own directory (b/<id>/, where this
+// script is): resolved from here, a page never asks for a file of another build.
+const here = (p) => new URL(p, import.meta.url).href;
+
+// Next visits (and offline) open from this build's cache: see sw.js. When a newer
+// build's service worker takes over this page (a deploy happened), reload while still
+// on the login screen, so the person gets the new build whole. Once the chat runs,
+// the page needs nothing else from the network, so it is left alone.
+let chatStarted = false;
+const idle = () => !chatStarted && !$("form").hidden && !$("pass").value && !$("pass2").value;
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  const hadController = !!navigator.serviceWorker.controller;   // first visit: nothing to replace
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) return;
+    if (idle()) location.reload();
+    // in the middle of something (a key being made, a backup, the chat): not now. This page
+    // keeps asking only for its own build's files; if the host no longer has them, it fails
+    // with a message instead of mixing builds.
+    else if (!chatStarted) status("há uma versão nova: recarregue a página quando terminar");
+  });
+  navigator.serviceWorker.register(new URL("sw.js", document.baseURI), { scope: "./" }).catch(() => {});
+}
+
+// py/*.zip.gz: a zip gzipped whole by the build; the browser inflates it natively
+async function fetchGz(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+}
+
 async function boot() {
-  const py = await loadPyodide({ indexURL: new URL("vendor/pyodide/", location.href).href, fullStdLib: false });
+  // downloads start together; the bytecode is unpacked once Python is up
+  const site = fetchGz(here("py/site.zip.gz"));
+  const py = await loadPyodide({ indexURL: here("vendor/pyodide/"), stdLibURL: here("py/python_stdlib.zip"), fullStdLib: false });
   mark("pyodide");
   status("carregando a criptografia…");
   await py.loadPackage(["cryptography"], { checkIntegrity: true, messageCallback: () => {} });
-  const manifest = await (await fetch("vendor/manifest.json")).json();
-  await py.loadPackage(manifest.wheels.map((f) => new URL("vendor/wheels/" + f, location.href).href),
-                       { messageCallback: () => {} });
   mark("packages");
   status("carregando o crptochat…");
-  const app = await (await fetch("app.zip")).arrayBuffer();
-  py.unpackArchive(app, "zip", { extractDir: "/app" });
+  py.unpackArchive(await site, "zip", { extractDir: "/" });     // Textual, Rich… e /app (crptochat, crptoweb)
   py.FS.mkdirTree("/data");
   py.FS.mount(py.FS.filesystems.IDBFS, {}, "/data");
   await syncfs(py, true);                                  // chaves e preferências salvas antes
-  py.runPython("import sys; sys.path.insert(0, '/app')");
-  await py.runPythonAsync("import crptoweb.boot, crptochat.tui");   // importa tudo antes do login
+  py.runPython("import sys, importlib; sys.path.insert(0, '/app'); importlib.invalidate_caches()");
+  extras(py).catch(() => {});                              // starts now, in the background
+  try {
+    await py.runPythonAsync("import crptoweb.boot, crptochat.tui");   // importa tudo antes do login
+  } catch (err) {
+    if (!/ModuleNotFoundError/.test(String(err))) throw err;
+    await extras(py);                                      // something outside the boot set: wait for the rest
+    await py.runPythonAsync("import crptoweb.boot, crptochat.tui");
+  }
   mark("ready");
   return py;
+}
+
+// What Python does not need to open the page: the rest of the standard library
+// (stdlib-rest.zip.gz) and Pygments (later.zip.gz, only for colouring code). Fetched
+// in the background as soon as the page is up, imported straight from the zips,
+// and always in place before the chat starts (launch waits for it).
+// A failure (the network went away) is not kept: the next call tries again.
+let extrasPromise = null;
+function extras(py) {
+  extrasPromise ??= (async () => {
+    for (const name of ["stdlib-rest.zip", "later.zip"]) {
+      py.FS.writeFile("/lib/" + name, new Uint8Array(await fetchGz(here(`py/${name}.gz`))));
+      py.runPython(`import sys, importlib; '/lib/${name}' in sys.path or sys.path.append('/lib/${name}'); importlib.invalidate_caches()`);
+    }
+    mark("extras");
+  })().catch((err) => { extrasPromise = null; throw err; });
+  return extrasPromise;
 }
 
 function terminalBridge(term) {
@@ -287,7 +340,10 @@ $("form").addEventListener("submit", async (ev) => {
 
 async function launch(py, url, nick, pass, anon) {
   remember("crpto.url", url); if (!anon) remember("crpto.nick", nick);
-  $("go").disabled = true; status("conectando…");
+  $("go").disabled = true; status("carregando o resto…");
+  try { await extras(py); } catch (err) { status("falha ao carregar: " + err.message, true); $("go").disabled = false; return; }
+  status("conectando…");
+  chatStarted = true;
   $("login").hidden = true; $("term").hidden = false; $("keys").hidden = false;
   const term = new Terminal({ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 14,
                               cursorBlink: false, allowProposedApi: false, scrollback: 0,
