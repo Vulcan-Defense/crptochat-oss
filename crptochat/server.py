@@ -1986,6 +1986,16 @@ async def _amain(args) -> None:
         print("  \033[38;5;214mTLS desativado\033[0m: o conteúdo continua E2EE, mas metadados trafegam em claro")
     port = await server.start(args.host, args.port, ssl_ctx)
     print(f"  escutando em {args.host}:{port} · dados em {os.path.abspath(args.data)}")
+    gate = None
+    if args.ws_port is not None:
+        from .webgate import WebGate
+        if bool(args.ws_cert) != bool(args.ws_key):
+            raise ValueError("--ws-cert e --ws-key vão juntos")
+        ws_ctx = make_ssl_context(args.ws_cert, args.ws_key) if args.ws_cert else None
+        gate = WebGate(server, args.ws_origin or [], ws_ctx, behind_proxy=ws_ctx is None)
+        ws_port = await gate.start(args.ws_host, args.ws_port)
+        mode = "wss (TLS próprio)" if ws_ctx else "ws em loopback, atrás do proxy reverso"
+        print(f"  cliente web: {mode} em {args.ws_host}:{ws_port} · origens: {', '.join(gate.origins)}")
     feed = None
     if not args.no_stats:
         from .stats import StatsFeed, socket_path
@@ -2014,6 +2024,8 @@ async def _amain(args) -> None:
         loop.add_signal_handler(sig, stop.set)
     await stop.wait()
     print("\n  encerrando...")
+    if gate:
+        await gate.stop()
     if feed:
         await feed.stop()
     if admin_sock:
@@ -2046,9 +2058,19 @@ administração com o servidor no ar (mesmo --data):
     ap.add_argument("--reg-limit", type=int, default=None,
                     help="nicks novos por IP por hora (0 = sem limite); sem a opção vale o configurado no "
                          "console (ratelimit set reg_per_hour N), padrão 5")
+    web = ap.add_argument_group("cliente web (WebSocket; desligado sem --ws-port)")
+    web.add_argument("--ws-port", type=int, default=None, help="porta do WebSocket para o cliente do navegador")
+    web.add_argument("--ws-host", default="127.0.0.1",
+                     help="endereço do WebSocket (padrão: 127.0.0.1, atrás de um proxy reverso com TLS)")
+    web.add_argument("--ws-origin", action="append", default=[], metavar="URL",
+                     help="origem permitida da página do cliente (ex.: https://app.exemplo.org); repita para várias")
+    web.add_argument("--ws-cert", help="certificado (PEM, de CA pública) para o WebSocket falar TLS direto")
+    web.add_argument("--ws-key", help="chave do --ws-cert")
     args = ap.parse_args(argv)
     try:
         asyncio.run(_amain(args))
+    except ValueError as exc:
+        sys.exit(f"erro: {exc}")
     except OSError as exc:
         sys.exit(f"erro: {exc}")
 

@@ -12,7 +12,8 @@ license = { text = "MIT" }
 dependencies = ["cryptography>=42", "textual>=1.0", "certifi>=2024.2.2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+web = ["websockets>=15"]
+dev = ["pytest>=8", "websockets>=15"]
 
 [project.scripts]
 crptochat = "crptochat.cli:main"
