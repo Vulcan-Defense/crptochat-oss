@@ -35,6 +35,27 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   - nada de analytics nem fontes externas.
   - Exceção: `style-src` precisa de `'unsafe-inline'`, porque o xterm.js
     aplica estilos inline. Estilo não executa código.
+  - **O host precisa mandar cabeçalhos HTTP.** Algumas proteções não valem
+    num `<meta>`: o navegador ignora `frame-ancestors` ali. Para a página não
+    poder ser embutida noutro site (clickjacking), quem serve o `dist/` precisa
+    responder com:
+
+    ```
+    Content-Security-Policy: frame-ancestors 'none'
+    X-Frame-Options: DENY
+    ```
+
+    Vale também mandar a CSP inteira por cabeçalho, além do `<meta>`.
+- **Sem pin de certificado no navegador.** O terminal fixa o certificado do
+  servidor na primeira conexão (TOFU, `--pin`, `--reset-pin`). O navegador não
+  deixa a página fazer isso: o `wss://` é conferido só contra as CAs públicas
+  em que o navegador confia, então o servidor precisa de um certificado de CA
+  pública. Quem conseguir um certificado válido para o domínio (uma CA
+  comprometida, o próprio host) pode se pôr no meio da conexão. Vê os
+  **metadados** (quem conecta, quando, tamanhos), mas **não o conteúdo**: a
+  cifra de ponta a ponta continua valendo, e uma troca da chave de um contato
+  aparece como mudança de fingerprint. Na interface aparece "TLS" para
+  `wss://`.
 - **`build.py`** gera `dist/`, que é o site estático. O Python chega **já
   compilado**: `precompile.mjs` roda o próprio Python do Pyodide no Node,
   então é a mesma versão e o mesmo bytecode da página. Os `.pyc` são "unchecked
@@ -72,8 +93,12 @@ integração passa então pelo que os cofres já fazem no navegador:
   gerenciadores procuram: nick como usuário, `current-password` para entrar,
   `new-password` com confirmação ao criar uma chave (aí eles oferecem gerar uma
   senha forte). Funciona com o gerenciador do Chrome, o iCloud Keychain, e com
-  Bitwarden, 1Password e KeePassXC pela extensão. No Chromium a página também
-  pede para salvar pela Credential Management API, depois que a senha abriu a chave.
+  Bitwarden, 1Password e KeePassXC pela extensão. **Pedir para guardar** a
+  senha (Credential Management API, só no Chromium) é **opt-in**: a caixa
+  "pedir ao navegador para guardar esta senha" vem desmarcada. Senha e backup da
+  chave no mesmo gerenciador deixam o gerenciador como a única proteção. O
+  navegador ou a extensão também podem oferecer por conta própria; a página
+  avisa que basta recusar.
 - **A chave no cofre, para backup e para levar entre aparelhos.** "Exportar /
   backup" dá o **mesmo blob** que o terminal guarda no cofre: a semente Ed25519
   já cifrada com a senha (scrypt + ChaCha20-Poly1305, presa ao nick). Ele é
@@ -82,7 +107,9 @@ integração passa então pelo que os cofres já fazem no navegador:
   esse blob, o arquivo `~/.config/crptochat/NICK.json` do terminal ou a saída
   de `pass show crptochat/NICK`. A senha é conferida no navegador antes de
   guardar. Uma chave diferente para o mesmo nick só é substituída se a pessoa
-  marcar "substituir".
+  marcar "substituir" **e** confirmar num segundo passo, que diz que a chave
+  atual será apagada de vez e oferece exportá-la antes. Se a chave importada
+  for a mesma que já está aqui, nada é apagado e não há confirmação.
 - **Backup obrigatório ao criar uma chave:** antes de abrir o chat aparece o
   painel de backup, porque a chave existe só naquele navegador. No iPhone o
   Safari pode apagar os dados do site.
