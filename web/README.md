@@ -62,6 +62,43 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
 
+## Chaves e cofres de senha
+
+O navegador não roda `pass`, `secret-tool` nem `vault` como o terminal. A
+integração passa então pelo que os cofres já fazem no navegador:
+
+- **Senha da chave no gerenciador de senhas.** O formulário segue o que os
+  gerenciadores procuram: nick como usuário, `current-password` para entrar,
+  `new-password` com confirmação ao criar uma chave (aí eles oferecem gerar uma
+  senha forte). Funciona com o gerenciador do Chrome, o iCloud Keychain, e com
+  Bitwarden, 1Password e KeePassXC pela extensão. **Pedir para guardar** a
+  senha (Credential Management API, só no Chromium) é **opt-in**: a caixa
+  "pedir ao navegador para guardar esta senha" vem desmarcada. Senha e backup da
+  chave no mesmo gerenciador deixam o gerenciador como a única proteção. O
+  navegador ou a extensão também podem oferecer por conta própria; a página
+  avisa que basta recusar.
+- **A chave no cofre, para backup e para levar entre aparelhos.** "Exportar /
+  backup" dá o **mesmo blob** que o terminal guarda no cofre: a semente Ed25519
+  já cifrada com a senha (scrypt + ChaCha20-Poly1305, presa ao nick). Ele é
+  baixado como arquivo ou copiado, e vai no gerenciador como nota segura ou
+  anexo, ou no `pass insert -m crptochat/NICK`. "Importar chave" aceita
+  esse blob, o arquivo `~/.config/crptochat/NICK.json` do terminal ou a saída
+  de `pass show crptochat/NICK`. A senha é conferida no navegador antes de
+  guardar. Uma chave diferente para o mesmo nick só é substituída se a pessoa
+  marcar "substituir" **e** confirmar num segundo passo, que diz que a chave
+  atual será apagada de vez e oferece exportá-la antes. Se a chave importada
+  for a mesma que já está aqui, nada é apagado e não há confirmação.
+- **Backup obrigatório ao criar uma chave:** antes de abrir o chat aparece o
+  painel de backup, porque a chave existe só naquele navegador. No iPhone o
+  Safari pode apagar os dados do site.
+
+Quem pegar o blob ainda precisa da senha. Guardar os dois no mesmo cofre deixa
+o cofre como a única proteção, igual a usar `--pass-cmd` no terminal.
+
+Ainda não: desbloquear com Face ID ou digital (passkey com a extensão PRF do
+WebAuthn), e mover a chave por dentro do chat (o "Mover minha chave" do menu
+chama programas locais e não funciona no navegador).
+
 ## Rodar localmente
 
 ```sh
@@ -124,5 +161,5 @@ já trata isso com os outros clientes.
    - hospedagem fora do servidor do chat;
    - monitor externo comparando o que é servido com a release;
    - página "verificar esta instalação".
-4. Backup da identidade (arquivo cifrado ou QR) e aviso de "adicione à tela
-   inicial" no iOS antes de criar a chave.
+4. Aviso de "adicione à tela inicial" no iOS antes de criar a chave, e
+   desbloqueio por passkey (PRF) como atalho opcional.
