@@ -2,12 +2,20 @@
 // and checks that the precompiled bytecode imports and works.
 //
 //   node web/smoke.mjs
-import { loadPyodide } from "./dist/vendor/pyodide/pyodide.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 
-const dist = path.join(path.dirname(new URL(import.meta.url).pathname), "dist") + "/";
+// everything of the build is under dist/b/<build id>/
+const root = path.join(path.dirname(new URL(import.meta.url).pathname), "dist");
+const builds = fs.readdirSync(path.join(root, "b"));
+if (builds.length !== 1) throw new Error(`esperava um build em dist/b/, achei ${builds.length}`);
+const dist = path.join(root, "b", builds[0]) + "/";
+const page = fs.readFileSync(path.join(root, "index.html"), "utf8");
+for (const ref of ["main.js", "style.css", "vendor/xterm/xterm.css"]) {
+  if (!page.includes(`b/${builds[0]}/${ref}`)) throw new Error(`index.html não aponta para b/${builds[0]}/${ref}`);
+}
+const { loadPyodide } = await import(dist + "vendor/pyodide/pyodide.mjs");
 const gz = (name) => new Uint8Array(zlib.gunzipSync(fs.readFileSync(dist + "py/" + name)));
 const py = await loadPyodide({ indexURL: dist + "vendor/pyodide/", stdLibURL: dist + "py/python_stdlib.zip",
                                stdout: () => {}, stderr: () => {} });

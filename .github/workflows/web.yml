@@ -1,35 +1,49 @@
 name: web
 # Builds the browser client (web/) the way it is published and checks it:
 # every vendored file against vendor.lock.json, the precompiled bytecode under
-# Pyodide (web/smoke.mjs), and that two builds give the same bytes.
+# Pyodide (web/smoke.mjs), and that the build is deterministic.
+#
+# What "two builds, same bytes" proves here: the build is deterministic on THIS
+# runner (no timestamps, ordering or randomness leaking into the output). It does
+# not prove that another machine gets the same bytes. For that, the toolchain is
+# pinned below (exact Python and Node, Pyodide and every package by hash in
+# vendor.lock.json), and the SHA256SUMS this job prints can be compared with a
+# build made elsewhere with the same versions; see web/README.md.
 on:
   push:
-    paths: ["web/**", "crptochat/**", ".github/workflows/web.yml"]
+    paths: ["web/**", "crptochat/**", "tests/**", ".github/workflows/web.yml"]
   pull_request:
-    paths: ["web/**", "crptochat/**", ".github/workflows/web.yml"]
+    paths: ["web/**", "crptochat/**", "tests/**", ".github/workflows/web.yml"]
 permissions:
   contents: read
 jobs:
-  build:
+  web:
+    name: web
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.8"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.12.0"
       - name: Baixar e conferir o vendor
         run: python web/fetch_vendor.py
       - name: Dependência do build (ws, travada no package-lock)
         run: cd web && npm ci --no-audit --no-fund --ignore-scripts
       - name: Build
         run: |
+          python --version
           node --version
           python web/build.py
           cp web/dist/SHA256SUMS /tmp/sums-1
       - name: Smoke test do build (Pyodide no Node)
         run: node web/smoke.mjs
-      - name: Build reproduzível
+      - name: Build determinístico (dois builds, mesmos bytes)
         run: |
           python web/build.py
-          diff /tmp/sums-1 web/dist/SHA256SUMS && echo "mesmos bytes nos dois builds"
+          diff /tmp/sums-1 web/dist/SHA256SUMS
+          echo "mesmos bytes nos dois builds; SHA256SUMS para comparar com um build feito em outra máquina:"
+          cat web/dist/SHA256SUMS

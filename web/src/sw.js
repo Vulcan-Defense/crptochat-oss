@@ -1,9 +1,16 @@
 // Service worker: keeps the files of THIS build (BUILD, FILES are filled in by
 // build.py) in a cache named after it, so the next visits open without
 // downloading ~10 MB again, and offline. Cache first: a file is fetched from the
-// network only the first time. A new build means a new sw.js; the browser
-// installs it on a later visit, and that drops the old build's cache. The page
-// never mixes builds: each build has its own cache and file list.
+// network only the first time.
+//
+// Builds never mix. Every file but index.html lives under b/<build id>/, and a
+// page only asks for files under its own build's directory; this worker only
+// answers for the paths of its own build. A new build means a new sw.js: it takes
+// over at once (skipWaiting + claim) and drops the old build's cache. An open page
+// of the old build then reloads if it is idle on the login screen (main.js), or
+// carries on: it needs nothing else once the chat runs, and any file of its own
+// build it still asks for comes from the network under the old build's path
+// (or fails with a 404), never from another build.
 //
 // Only GET requests for files of this build, from this origin, are touched;
 // anything else (the WebSocket to the chat server included) passes through.

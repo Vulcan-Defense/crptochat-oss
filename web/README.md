@@ -72,15 +72,33 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   Os `.zip.gz` são zips sem compressão interna e comprimidos inteiros. Ficam
   menores e o navegador descomprime nativamente (`DecompressionStream`), sem
   depender de o host comprimir `.zip`.
-- **Build reproduzível:** datas, ordem e bytecode fixos, então o mesmo commit
-  gera os mesmos bytes. O CI (`.github/workflows/web.yml`) confere isso
-  buildando duas vezes, e roda `smoke.mjs`, que carrega o `dist/` como a página
-  faz. `SHA256SUMS` lista todos os arquivos.
+- **Build determinístico; reprodutível ainda a provar:** datas, ordem e
+  bytecode fixos. O CI (`.github/workflows/web.yml`, check "web") builda duas
+  vezes no mesmo runner e compara o `SHA256SUMS`, e roda `smoke.mjs`, que
+  carrega o `dist/` como a página faz. Isso prova **determinismo** (nada de data,
+  ordem ou acaso no resultado), **não** que outra máquina chega aos mesmos bytes.
+  Para que isso seja verificável, a toolchain está fixada:
+  - Python 3.12.8 e Node 22.12.0 no CI;
+  - Pyodide e cada pacote por hash no `vendor.lock.json`;
+  - `ws` no `package-lock.json`.
+  
+  O job imprime o `SHA256SUMS`. Quem quiser conferir builda o mesmo commit com
+  as mesmas versões e compara. O bytecode vem do Python do Pyodide (wasm), não
+  do Python da máquina, o que ajuda, mas só uma segunda máquina prova.
+- **Cada build no seu caminho:** tudo menos `index.html` e `sw.js` fica em
+  `b/<id do build>/`, e o id é o hash de todos os arquivos. Uma página só pede
+  arquivos do próprio build, então nunca mistura builds: no pior caso recebe
+  404, se o host já trocou de build. Os arquivos de `b/` nunca mudam e podem ir
+  com cache longo (`Cache-Control: immutable`); `index.html` e `sw.js` não.
 - **Service worker (`sw.js`):** guarda os arquivos **deste build** num cache
-  com o id do build, que é o hash de todos os arquivos. Da segunda visita em
-  diante a página abre sem baixar nada, e funciona até offline. Um build novo
-  troca o `sw.js`; o navegador instala o novo numa visita seguinte e apaga o
-  cache antigo. Só arquivos do build passam pelo cache; o WebSocket não.
+  com o id do build. Da segunda visita em diante a página abre sem baixar nada,
+  e funciona até offline. Um build novo traz um `sw.js` novo, que assume na
+  hora e apaga o cache antigo. A página aberta do build antigo:
+  - **recarrega** se estiver parada na tela de login (sem senha digitada);
+  - senão, mostra "há uma versão nova", e segue no build dela.
+  
+  Depois que o chat abre, a página não precisa de mais nada da rede. Só
+  arquivos do build passam pelo cache; o WebSocket não.
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
 
