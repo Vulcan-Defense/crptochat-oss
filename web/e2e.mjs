@@ -42,10 +42,11 @@ const origin = `http://localhost:${site.address().port}`;
 // the server, with the WebSocket entrance for that origin
 const wsPort = 20000 + Math.floor(Math.random() * 20000);
 const server = spawn(PY, ["-m", "crptochat.server", "--data", path.join(TMP, "srv"), "--port", "0", "--no-tls",
-                          "--no-stats", "--ws-port", String(wsPort), "--ws-origin", origin], { stdio: ["ignore", "pipe", "pipe"] });
+                          "--no-stats", "--ws-port", String(wsPort), "--ws-origin", origin],
+                     { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PYTHONUNBUFFERED: "1" } });   // its banner tells when it is up
 let serverOut = "";
 server.stdout.on("data", (d) => (serverOut += d)); server.stderr.on("data", (d) => (serverOut += d));
-for (let i = 0; i < 100 && !/cliente web/.test(serverOut) && server.exitCode === null; i++) {
+for (let i = 0; i < 300 && !/cliente web/.test(serverOut) && server.exitCode === null; i++) {
   await new Promise((ok) => setTimeout(ok, 100));
 }
 if (!/cliente web/.test(serverOut)) {          // no WebSocket entrance: nothing below can work
