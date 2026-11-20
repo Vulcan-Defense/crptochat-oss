@@ -99,6 +99,9 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   
   Depois que o chat abre, a página não precisa de mais nada da rede. Só
   arquivos do build passam pelo cache; o WebSocket não.
+- **Navegador antigo:** sem `DecompressionStream` (Safari antes do 16.4),
+  `WebAssembly` ou `IndexedDB`, a página diz qual falta e a versão mínima, em
+  vez de quebrar depois.
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
 
@@ -145,7 +148,8 @@ chama programas locais e não funciona no navegador).
 python3 web/fetch_vendor.py          # baixa e confere web/vendor/ (~19 MB)
 (cd web && npm ci)                   # o build roda o Pyodide no Node (precisa do Node 18+)
 python3 web/build.py                 # gera web/dist/
-node web/smoke.mjs                   # opcional: confere o build
+node web/smoke.mjs                   # opcional: confere o build (Pyodide no Node)
+node web/e2e.mjs                     # opcional: ponta a ponta no Chromium (precisa do crptochat instalado)
 
 # servidor com a entrada WebSocket, aceitando a página servida em localhost:8123
 crptochat-server --no-tls --ws-port 7778 --ws-origin http://localhost:8123

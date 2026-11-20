@@ -39,6 +39,15 @@ import crptoweb.boot, crptochat.tui, crptoweb.keys
 crptoweb.boot.prepare()
 "crptoweb.boot, crptochat.tui, crptoweb.keys"`);
 
+// 1b. the rest of what runs in the page: the WebSocket transport, the Textual driver, the client
+run("transporte, driver e cliente", `
+import crptoweb.net, crptoweb.driver
+from crptoweb.wire import check_url
+from crptochat.client import ChatClient
+assert crptoweb.net.WebSocketStream and issubclass(crptoweb.driver.XtermDriver, __import__("textual.driver").driver.Driver)
+assert check_url("wss://chat.exemplo.org") == ("chat.exemplo.org", 443, True)
+"crptoweb.net, crptoweb.driver, ChatClient"`);
+
 // 2. a key made and opened in the browser's file system
 run("chave", `
 from crptoweb import keys

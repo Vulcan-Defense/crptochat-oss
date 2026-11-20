@@ -51,7 +51,19 @@ async function fetchGz(url) {
   return new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
 }
 
+// What the page cannot work without. Safari before 16.4 (iOS 16.4) has no
+// DecompressionStream, which unpacks py/*.zip.gz: say so plainly instead of failing later.
+function missingFeatures() {
+  const need = { DecompressionStream: "DecompressionStream", WebAssembly: "WebAssembly", indexedDB: "IndexedDB" };
+  return Object.entries(need).filter(([k]) => !(k in window)).map(([, v]) => v);
+}
+
 async function boot() {
+  const missing = missingFeatures();
+  if (missing.length) {
+    throw new Error(`este navegador não tem ${missing.join(", ")}. Atualize o navegador ` +
+                    "(no iPhone/iPad: iOS 16.4 ou mais novo; Safari 16.4+; Chrome/Edge 80+; Firefox 113+).");
+  }
   // downloads start together; the bytecode is unpacked once Python is up
   const site = fetchGz(here("py/site.zip.gz"));
   const py = await loadPyodide({ indexURL: here("vendor/pyodide/"), stdLibURL: here("py/python_stdlib.zip"), fullStdLib: false });
@@ -145,7 +157,7 @@ const ready = boot().then((py) => {
   $("open-import").disabled = false;
   refreshMode();
   return py;
-}).catch((err) => { status("falha ao carregar: " + err, true); throw err; });
+}).catch((err) => { status("falha ao carregar: " + (err.message || err), true); throw err; });
 
 // ------------------------------------------------ new key or existing one
 
