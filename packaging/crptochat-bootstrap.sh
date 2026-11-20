@@ -1,5 +1,7 @@
 #!/bin/sh
-# Configuração única idempotente da VM. Exige /opt/crptochat no merge #30+.
+# Configuração única idempotente da VM. Exige /opt/crptochat com o deploy que usa
+# rede/volume external e dry-run (deploy_lib.py com check-compose-config e
+# check-server-config; checkout do merge #30 ou anterior é recusado).
 # Uso: sudo sh /opt/crptochat/packaging/crptochat-bootstrap.sh
 #
 # Tudo o que ela muda é salvo antes em BACKUP_ROOT, e o DESFAZER.sh de lá é
@@ -35,9 +37,9 @@ MODIFIED_CADDY_COMPOSE=0
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 fail() {
-  log "ERRO: $*"
+  log "ERRO: $*" >&2
   if [ -f "$DESFAZER" ]; then
-    log "nada além do que está em ${BACKUP_ROOT} foi alterado; para desfazer: sh ${DESFAZER}"
+    log "nada além do que está em ${BACKUP_ROOT} foi alterado; para desfazer: sh ${DESFAZER}" >&2
   fi
   exit 1
 }
@@ -47,7 +49,15 @@ py_lib() {
 }
 
 [ "$(id -u)" = 0 ] || fail "rode como root"
-[ -f "${REPO_DIR}/packaging/deploy_lib.py" ] || fail "${REPO_DIR} não está no merge #30 (falta deploy_lib.py)"
+[ -f "${REPO_DIR}/packaging/deploy_lib.py" ] || fail "${REPO_DIR} anterior ao merge #30 (falta deploy_lib.py)"
+for sub in check-compose-config check-server-config check-dry-run; do
+  py_lib "$sub" --help >/dev/null 2>&1 \
+    || fail "${REPO_DIR} desatualizado: deploy_lib.py sem ${sub} (atualize o checkout antes do bootstrap)"
+done
+
+valid_version() { printf '%s\n' "$1" | grep -Eqx '[0-9]+(\.[0-9]+){1,3}'; }
+valid_pin() { printf '%s\n' "$1" | grep -Eqx '[0-9a-f]{64}'; }
+short_pin() { printf '%s' "$1" | sed 's/^\(....\).\{1,\}\(....\)$/\1…\2/'; }
 
 umask 077
 mkdir -p "$BACKUP_ROOT"
@@ -107,9 +117,6 @@ write_desfazer() {
 
 write_desfazer      # right after the backup: nothing changed yet, nothing to undo but what is listed
 
-# ---- the deploy entry point (forced command of the SSH key)
-install -m 755 "${REPO_DIR}/packaging/crptochat-deploy.sh" "$DEPLOY_BIN"
-
 # ---- deploy.env and the initial state
 if [ ! -f "$DEPLOY_ENV" ]; then
   mkdir -p "$(dirname "$DEPLOY_ENV")"
@@ -132,15 +139,18 @@ if [ ! -f "$STATE_FILE" ]; then
   [ "$running" = true ] || fail "contêiner ${CONTAINER} não está rodando"
   pin=$(docker logs "$CONTAINER" 2>&1 | tr -d '\033' | grep -oE '[0-9a-f]{64}' | head -n 1)
   [ -n "$pin" ] || fail "PIN TLS vazio nos logs de ${CONTAINER}"
+  valid_pin "$pin" || fail "PIN TLS inválido nos logs de ${CONTAINER}"
   version=$(docker exec "$CONTAINER" python -c "from crptochat import __version__; print(__version__)" 2>/dev/null) \
     || fail "não foi possível ler a versão do contêiner"
+  valid_version "$version" || fail "versão do contêiner inválida"
   mkdir -p "$(dirname "$STATE_FILE")"
   {
     printf 'prev_tag=v%s\n' "$version"
     printf 'tls_pin=%s\n' "$pin"
-  } > "$STATE_FILE"
-  chmod 600 "$STATE_FILE"
-  log "deploy.state inicial: v${version}"
+  } > "${STATE_FILE}.tmp"
+  chmod 600 "${STATE_FILE}.tmp"
+  mv -f "${STATE_FILE}.tmp" "$STATE_FILE"
+  log "deploy.state inicial: v${version} PIN $(short_pin "$pin")"
 fi
 
 # ---- the network the Caddy uses to reach crptochat:7778 (wss)
@@ -150,7 +160,8 @@ if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
   write_desfazer
   docker network create "$NETWORK" >/dev/null || fail "não foi possível criar a rede ${NETWORK}"
 fi
-if docker inspect "$CADDY_CONTAINER" --format '{{json .NetworkSettings.Networks}}' | grep -q "\"${NETWORK}\""; then
+caddy_nets=" $(docker inspect --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}} {{end}}' "$CADDY_CONTAINER") "
+if case "$caddy_nets" in *" ${NETWORK} "*) true ;; *) false ;; esac; then
   log "Caddy já na rede ${NETWORK}"
 else
   CONNECTED_CADDY=1
@@ -195,6 +206,12 @@ if ! cmp -s "$CADDYFILE" "$new_cf"; then
   log "Caddyfile: /ws encaminhado para crptochat:7778"
 fi
 
+# ---- the deploy entry point (forced command of the SSH key): only now, after the
+# network and the Caddy are in place, so a deploy never runs against a half-done VM
 write_desfazer
+tmp_bin="${DEPLOY_BIN}.new"
+install -m 755 "${REPO_DIR}/packaging/crptochat-deploy.sh" "$tmp_bin"
+mv -f "$tmp_bin" "$DEPLOY_BIN"
+
 log "bootstrap concluído; backup em ${BACKUP_ROOT}"
 log "desfazer: sh ${DESFAZER}"

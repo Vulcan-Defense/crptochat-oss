@@ -152,6 +152,8 @@ def verify_downloaded_assets(manifest_path: Path, directory: Path, names: list[s
     info = update.parse_manifest(manifest_path.read_bytes())
     wanted = sorted(info["files"]) if names is None else list(names)
     for name in wanted:
+        if name not in DOWNLOAD_ASSET_NAMES:
+            raise DeployError(f"{name!r} não é um arquivo de release conhecido")
         if name not in info["files"]:
             raise DeployError(f"{name} não está na RELEASE")
         expected = info["files"][name]
@@ -431,18 +433,108 @@ def extract_selftest_fingerprint(probe_output: str) -> str | None:
     return None
 
 
-def render_compose(template_path: Path, out_path: Path, volume_name: str) -> None:
-    text = template_path.read_text(encoding="utf-8")
-    text = re.sub(
-        r"\nvolumes:\n.*\Z",
-        f"\nvolumes:\n  crptochat-data:\n    external: true\n    name: {volume_name}\n",
-        text,
-        flags=re.DOTALL,
-    )
+SHARED_NETWORK = "crptochat"
+DATA_VOLUME_KEY = "crptochat-data"
+
+
+def _set_toplevel_child(lines: list[str], section: str, child: str, body: list[str]) -> list[str]:
+    """`section.child` (top level) becomes exactly `body` (lines indented under the
+    child), the rest of the file as it is. Adds the section or the child if missing."""
+    _, top = _keys(lines, 0, len(lines))
+    new_child = [f"  {child}:"] + [f"    {b}" for b in body]
+    if section not in top:
+        at = _last_line(lines, 0, len(lines))
+        sep = [""] if at and lines[at - 1].strip() else []
+        return lines[:at] + sep + [f"{section}:"] + new_child + lines[at:]
+    s_line, s_end, inline = top[section]
+    if inline is not None:
+        raise DeployError(f"seção {section}: em formato inline não suportado no template")
+    child_indent, children = _keys(lines, s_line + 1, s_end)
+    if child_indent is not None and child_indent != 2:
+        raise DeployError(f"seção {section}: indentação {child_indent} não suportada no template")
+    if child in children:
+        c_line, c_end, _ = children[child]
+        c_last = max(_last_line(lines, c_line, c_end), c_line + 1)
+        return lines[:c_line] + new_child + lines[c_last:]
+    at = _last_line(lines, s_line + 1, s_end) if child_indent is not None else s_line + 1
+    return lines[:at] + new_child + lines[at:]
+
+
+def render_compose_text(template: str, volume_name: str, network_name: str = SHARED_NETWORK) -> str:
+    """The template with the shared network and the data volume as `external`: the
+    server's compose never creates, recreates or removes them (the network is shared
+    with the Caddy, the volume holds the TLS key, i.e. the PIN). Edited by structure:
+    only those two nodes change, everything else in the template is kept as is."""
+    if not SAFE_NAME.fullmatch(network_name) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,62}", volume_name):
+        raise DeployError("nome de rede ou volume inválido")
+    lines = template.splitlines()
+    _, top = _keys(lines, 0, len(lines))
+    if "services" not in top:
+        raise DeployError("template do compose sem services:")
+    lines = _set_toplevel_child(lines, "networks", network_name, ["external: true", f"name: {network_name}"])
+    lines = _set_toplevel_child(lines, "volumes", DATA_VOLUME_KEY, ["external: true", f"name: {volume_name}"])
+    return "\n".join(lines) + "\n"
+
+
+def render_compose(template_path: Path, out_path: Path, volume_name: str, network_name: str = SHARED_NETWORK) -> None:
+    text = render_compose_text(template_path.read_text(encoding="utf-8"), volume_name, network_name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(out_path)
+
+
+def check_server_config_json(config_json: str, volume_name: str, network_name: str = SHARED_NETWORK,
+                             service: str = "server") -> dict:
+    """What `docker compose config --format json` says about the rendered server
+    compose: network and volume external (with their real names), 7777 published,
+    the WebGate on 7778. Returns ws_port / ws_origin for the health check."""
+    import json
+    cfg = json.loads(config_json)
+    net = (cfg.get("networks") or {}).get(network_name) or {}
+    if net.get("external") is not True or net.get("name") != network_name:
+        raise DeployError(f"compose do servidor: rede {network_name} não é external com name {network_name}")
+    vol = (cfg.get("volumes") or {}).get(DATA_VOLUME_KEY) or {}
+    if vol.get("external") is not True or vol.get("name") != volume_name:
+        raise DeployError(f"compose do servidor: volume {DATA_VOLUME_KEY} não é external com name {volume_name}")
+    svc = (cfg.get("services") or {}).get(service)
+    if not svc:
+        raise DeployError(f"compose do servidor sem serviço {service}")
+    if network_name not in (svc.get("networks") or {}):
+        raise DeployError(f"serviço {service} fora da rede {network_name}")
+    mounts = svc.get("volumes") or []
+    if not any(m.get("source") == DATA_VOLUME_KEY and m.get("target") == "/data" for m in mounts if isinstance(m, dict)):
+        raise DeployError(f"serviço {service} sem {DATA_VOLUME_KEY}:/data")
+    ports = svc.get("ports") or []
+    if not any(str(p.get("target")) == "7777" and str(p.get("published")) == "7777" for p in ports if isinstance(p, dict)):
+        raise DeployError("porta 7777 não publicada no compose do servidor")
+    cmd = [str(c) for c in (svc.get("command") or [])]
+
+    def opt(name):
+        return cmd[cmd.index(name) + 1] if name in cmd and cmd.index(name) + 1 < len(cmd) else None
+
+    if opt("--ws-port") != "7778":
+        raise DeployError("compose do servidor sem --ws-port 7778")
+    return {"ws_port": opt("--ws-port"), "ws_origin": opt("--ws-origin") or ""}
+
+
+# `docker compose up --dry-run` lines that touch the shared network or the data
+# volume: Create/Recreate/Remove in any form ("Creating", "Recreated", "Removing").
+_DRY_TOUCH = re.compile(r"\b(network|volume)\b.*\b(re)?(creat|remov)", re.I)
+_DRY_CONTAINER = re.compile(r"\bcontainer\s+(\S+).*\b(stop|kill|remov|recreat|restart)", re.I)
+
+
+def check_dry_run(output: str, container: str) -> list[str]:
+    """Lines of the dry-run that would do more than recreate the server container."""
+    bad = []
+    for line in output.splitlines():
+        if _DRY_TOUCH.search(line):
+            bad.append(line.strip())
+            continue
+        m = _DRY_CONTAINER.search(line)
+        if m and m.group(1).strip("\"'") != container:
+            bad.append(line.strip())
+    return bad
 
 
 def cmd_verify_release(argv: list[str]) -> int:
@@ -463,6 +555,7 @@ def cmd_verify_release(argv: list[str]) -> int:
         return 1
     print(f"commit={info['commit']}")
     print(f"version={info['version']}")
+    print(f"built={info['built']}")
     return 0
 
 
@@ -481,9 +574,41 @@ def cmd_render_compose(argv: list[str]) -> int:
     ap.add_argument("--template", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--volume", required=True)
+    ap.add_argument("--network", default=SHARED_NETWORK)
     args = ap.parse_args(argv)
-    render_compose(args.template, args.out, args.volume)
+    try:
+        render_compose(args.template, args.out, args.volume, args.network)
+    except DeployError as exc:
+        print(f"erro: {exc}", file=sys.stderr)
+        return 1
     return 0
+
+
+def cmd_check_server_config(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", type=Path, required=True)
+    ap.add_argument("--volume", required=True)
+    ap.add_argument("--network", default=SHARED_NETWORK)
+    args = ap.parse_args(argv)
+    try:
+        got = check_server_config_json(args.json.read_text(encoding="utf-8"), args.volume, args.network)
+    except (DeployError, ValueError, AttributeError) as exc:
+        print(f"erro: {exc}", file=sys.stderr)
+        return 1
+    print(f"ws_port={got['ws_port']}")
+    print(f"ws_origin={got['ws_origin']}")
+    return 0
+
+
+def cmd_check_dry_run(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--file", type=Path, required=True)
+    ap.add_argument("--container", required=True)
+    args = ap.parse_args(argv)
+    bad = check_dry_run(args.file.read_text(encoding="utf-8", errors="replace"), args.container)
+    for line in bad:
+        print(line)
+    return 1 if bad else 0
 
 
 def cmd_caddy_ws(argv: list[str]) -> int:
@@ -558,6 +683,10 @@ def cmd_list_assets(argv: list[str]) -> int:
     ap.add_argument("--except", dest="skip", action="append", default=[])
     args = ap.parse_args(argv)
     info = update.parse_manifest(args.manifest.read_bytes())
+    unknown = sorted(set(info["files"]) - set(DOWNLOAD_ASSET_NAMES))
+    if unknown:
+        print(f"erro: RELEASE lista arquivos fora da lista fechada: {', '.join(unknown)}", file=sys.stderr)
+        return 1
     for name in sorted(info["files"]):
         if name not in args.skip:
             print(name)
@@ -576,7 +705,7 @@ def cmd_root_index(argv: list[str]) -> int:
 def main() -> int:
     if len(sys.argv) < 2:
         print("uso: deploy_lib.py verify-release | env-check | render-compose | caddy-ws | caddy-compose | "
-              "check-compose-config | root-index",
+              "check-compose-config | check-server-config | check-dry-run | verify-assets | list-assets | root-index",
               file=sys.stderr)
         return 2
     cmd = sys.argv[1]
@@ -599,6 +728,10 @@ def main() -> int:
         return cmd_caddy_compose(rest)
     if cmd == "check-compose-config":
         return cmd_check_compose_config(rest)
+    if cmd == "check-server-config":
+        return cmd_check_server_config(rest)
+    if cmd == "check-dry-run":
+        return cmd_check_dry_run(rest)
     print(f"comando desconhecido: {cmd}", file=sys.stderr)
     return 2
 

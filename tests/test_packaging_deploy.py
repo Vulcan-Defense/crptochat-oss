@@ -29,6 +29,9 @@ def test_deploy_script_prod_defaults_and_guards():
     assert "trap \"rm -rf" not in text
     assert "selftest --probe" in text
     assert "publish_discard_prevs" in text
+    assert "--remove-orphans" not in text.replace("never --remove-orphans", "")
+    assert "--dry-run" in text and "check-dry-run" in text
+    assert ". \"$STATE_FILE\"" not in text                       # deploy.state is parsed, not sourced
 
 
 def test_compose_template_exposes_public_relay_and_ws_behind_proxy():
@@ -37,6 +40,8 @@ def test_compose_template_exposes_public_relay_and_ws_behind_proxy():
     assert "127.0.0.1:7778" not in compose
     assert "--ws-behind-proxy" in compose
     assert "name: crptochat" in compose
+    # the shared network belongs to the bootstrap, never to this compose (#31 incident)
+    assert "networks:\n  crptochat:\n    external: true\n    name: crptochat\n" in compose
 
 
 def test_bootstrap_matches_vm():
@@ -52,3 +57,7 @@ def test_bootstrap_matches_vm():
     assert "PIN TLS vazio" in text
     assert "NETWORK=crptochat" in text and 'network connect "$NETWORK"' in text
     assert "|| true" not in text.split('network connect "$NETWORK"')[1].split("\n")[0]
+    assert "{{range $k,$_ := .NetworkSettings.Networks}}" in text and "{{json .NetworkSettings" not in text
+    # the deploy entry point is installed last, after the Caddy steps
+    assert text.index('install -m 755 "${REPO_DIR}/packaging/crptochat-deploy.sh"') > text.index("caddy reload")
+    assert "check-server-config" in text
