@@ -1,6 +1,5 @@
 #!/bin/sh
-# Entrada do comando forçado SSH na VM de produção (uma tag vX.Y.Z em
-# SSH_ORIGINAL_COMMAND). Instalação: packaging/DEPLOY.md
+# Entrada do comando forçado SSH na VM (tag vX.Y.Z em SSH_ORIGINAL_COMMAND). packaging/DEPLOY.md
 set -eu
 
 DEPLOY_ENV=/etc/crptochat/deploy.env
@@ -19,6 +18,7 @@ IMAGE=${CRPTOCHAT_IMAGE:-crptochat-server}
 DATA_VOLUME=${CRPTOCHAT_DATA_VOLUME:-crptochat-setup_crptochat-data}
 CLIENT_REPO=${CRPTOCHAT_CLIENT_REPO:-hacking-table/crptochat-client}
 SITE_ROOT=${CRPTOCHAT_SITE_ROOT:-/opt/crptochat-site}
+WEB_TARBALL=crptochat-web-dist.tar.gz
 LOG_DIR=${CRPTOCHAT_DEPLOY_LOG_DIR:-/var/log/crptochat}
 STATE_FILE=${CRPTOCHAT_STATE_FILE:-/var/lib/crptochat/deploy.state}
 BACKUP_DIR=${CRPTOCHAT_BACKUP_DIR:-/var/backups/crptochat}
@@ -26,6 +26,10 @@ LOCK_FILE=${CRPTOCHAT_DEPLOY_LOCK:-/var/lock/crptochat-deploy.lock}
 SIGNING_PUBKEY=${CLIENT_SIGNING_PUBKEY:-UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE=}
 SMOKE_TIMEOUT=${CRPTOCHAT_SMOKE_TIMEOUT:-20}
 HEALTH_WAIT=${CRPTOCHAT_HEALTH_WAIT:-20}
+
+DEPLOY_TMP=
+SNAP_DIR=
+PREV_REGISTRY=
 
 umask 077
 
@@ -42,6 +46,11 @@ fail() {
   log "ERRO: $*"
   exit 1
 }
+
+cleanup_tmp() {
+  [ -n "${DEPLOY_TMP:-}" ] && rm -rf "$DEPLOY_TMP"
+}
+trap cleanup_tmp EXIT INT TERM
 
 py_deploy() {
   PYTHONPATH="$REPO_DIR" CLIENT_SIGNING_PUBKEY="$SIGNING_PUBKEY" python3 "$REPO_DIR/packaging/deploy_lib.py" "$@"
@@ -155,62 +164,150 @@ repo_version() {
   sed -n 's/^__version__ = "\([0-9][0-9.]*\)".*/\1/p' "$REPO_DIR/crptochat/__init__.py" | head -n 1
 }
 
-sync_compose_file() {
-  py_deploy render-compose \
-    --template "$REPO_DIR/docker-compose.isolated.yml" \
-    --out "$COMPOSE_FILE" \
-    --volume "$DATA_VOLUME"
-  log "compose em ${COMPOSE_FILE}"
-}
-
-build_web_dist() {
-  (
-    umask 022
-    cd "$REPO_DIR"
-    if [ ! -d web/node_modules/ws ]; then
-      (cd web && npm ci)
-    fi
-    if [ ! -f web/vendor/manifest.json ]; then
-      python3 web/fetch_vendor.py
-    fi
-    python3 web/build.py
-  )
-}
-
-publish_dir() {
+publish_begin() {
   src=$1
   dest=$2
   parent=$(dirname "$dest")
   base=$(basename "$dest")
-  new="${parent}/.${base}.new.$$"
-  prev="${parent}/.${base}.prev.$$"
+  new="${parent}/.${base}.new"
+  prev="${parent}/.${base}.prev"
   rm -rf "$new"
   cp -a "$src" "$new"
+  printf '%s\n' "$dest" >> "$PREV_REGISTRY"
   if [ -e "$dest" ]; then
     rm -rf "$prev"
     mv "$dest" "$prev"
   fi
   mv "$new" "$dest"
-  rm -rf "$prev" 2>/dev/null || true
+}
+
+publish_file_begin() {
+  src=$1
+  dest=$2
+  parent=$(dirname "$dest")
+  base=$(basename "$dest")
+  new="${parent}/.${base}.new"
+  prev="${parent}/.${base}.prev"
+  cp "$src" "$new"
+  printf '%s\n' "$dest" >> "$PREV_REGISTRY"
+  if [ -f "$dest" ]; then
+    rm -f "$prev"
+    mv "$dest" "$prev"
+  fi
+  mv "$new" "$dest"
+  chmod 644 "$dest"
+}
+
+publish_discard_prevs() {
+  while IFS= read -r dest; do
+    base=$(basename "$dest")
+    parent=$(dirname "$dest")
+    rm -rf "${parent}/.${base}.prev" 2>/dev/null || true
+  done < "$PREV_REGISTRY"
+}
+
+publish_restore_prevs() {
+  while IFS= read -r dest; do
+    base=$(basename "$dest")
+    parent=$(dirname "$dest")
+    prev="${parent}/.${base}.prev"
+    if [ -e "$prev" ] || [ -d "$prev" ]; then
+      rm -rf "$dest"
+      mv "$prev" "$dest"
+    fi
+    rm -rf "${parent}/.${base}.new" 2>/dev/null || true
+  done < "$PREV_REGISTRY"
+}
+
+snapshot_create() {
+  SNAP_DIR="${DEPLOY_TMP}/snap"
+  mkdir -p "$SNAP_DIR/site"
+  PREV_REGISTRY="${SNAP_DIR}/prev_registry.txt"
+  : > "$PREV_REGISTRY"
+  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    docker inspect --format '{{.Image}}' "$CONTAINER" > "$SNAP_DIR/image_id"
+  else
+    : > "$SNAP_DIR/image_id"
+  fi
+  if [ -f "$COMPOSE_FILE" ]; then
+    cp "$COMPOSE_FILE" "$SNAP_DIR/compose.yml"
+  fi
+  [ -d "${SITE_ROOT}/web" ] && cp -a "${SITE_ROOT}/web" "$SNAP_DIR/site/web" || true
+  [ -d "${SITE_ROOT}/downloads" ] && cp -a "${SITE_ROOT}/downloads" "$SNAP_DIR/site/downloads" || true
+  [ -f "${SITE_ROOT}/index.html" ] && cp "${SITE_ROOT}/index.html" "$SNAP_DIR/site/index.html" || true
+  log "snapshot do estado atual gravado"
+}
+
+snapshot_restore() {
+  log "restaurando snapshot (sem re-renderizar compose de commit antigo)"
+  if [ -f "$SNAP_DIR/compose.yml" ]; then
+    cp "$SNAP_DIR/compose.yml" "$COMPOSE_FILE"
+  fi
+  publish_restore_prevs
+  if [ -f "$SNAP_DIR/image_id" ] && [ -s "$SNAP_DIR/image_id" ]; then
+    img=$(cat "$SNAP_DIR/image_id")
+    docker tag "$img" "$IMAGE" 2>/dev/null || log "aviso: não foi possível retag da imagem $img"
+  fi
+  if [ -d "$SNAP_DIR/site/web" ]; then
+    rm -rf "${SITE_ROOT}/web"
+    cp -a "$SNAP_DIR/site/web" "${SITE_ROOT}/web"
+  fi
+  if [ -d "$SNAP_DIR/site/downloads" ]; then
+    rm -rf "${SITE_ROOT}/downloads"
+    cp -a "$SNAP_DIR/site/downloads" "${SITE_ROOT}/downloads"
+  fi
+  if [ -f "$SNAP_DIR/site/index.html" ]; then
+    cp "$SNAP_DIR/site/index.html" "${SITE_ROOT}/index.html"
+    chmod 644 "${SITE_ROOT}/index.html"
+  fi
+  compose up -d || log "aviso: compose up no restore falhou"
+}
+
+sync_compose_file() {
+  staged="${DEPLOY_TMP}/compose.rendered.yml"
+  py_deploy render-compose \
+    --template "$REPO_DIR/docker-compose.isolated.yml" \
+    --out "$staged" \
+    --volume "$DATA_VOLUME"
+  publish_file_begin "$staged" "$COMPOSE_FILE"
+  log "compose em ${COMPOSE_FILE}"
 }
 
 sync_site_pages() {
   pin=$1
   manifest_dir=$2
-  mkdir -p "${SITE_ROOT}/downloads"
-  tmpi=$(mktemp)
-  tmpd=$(mktemp)
   version=$(sed -n 's/^version=//p' "${manifest_dir}/verified.txt")
-  cp "$REPO_DIR/site/index.html" "$tmpi"
-  cp "$REPO_DIR/site/downloads/index.html" "$tmpd"
-  python3 "$REPO_DIR/packaging/stamp_site.py" --version "$version" --pin "$pin" "$tmpi" "$tmpd"
-  mv -f "$tmpi" "${SITE_ROOT}/index.html"
-  mv -f "$tmpd" "${SITE_ROOT}/downloads/index.html"
+  root="${DEPLOY_TMP}/index.root.html"
+  dl="${DEPLOY_TMP}/index.dl.html"
+  py_deploy root-index --downloads "$REPO_DIR/site/downloads/index.html" --out "$root"
+  cp "$REPO_DIR/site/downloads/index.html" "$dl"
+  python3 "$REPO_DIR/packaging/stamp_site.py" --version "$version" --pin "$pin" "$root" "$dl"
+  chmod 644 "$root" "$dl"
+  publish_file_begin "$root" "${SITE_ROOT}/index.html"
+  publish_file_begin "$dl" "${SITE_ROOT}/downloads/index.html"
   log "páginas HTML em ${SITE_ROOT}"
 }
 
-sync_web_client() {
-  publish_dir "$REPO_DIR/web/dist" "${SITE_ROOT}/web"
+sync_web_from_release() {
+  tag=$1
+  manifest_dir=$2
+  stage=$(mktemp -d)
+  if ! curl -fsSL --max-time 600 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${WEB_TARBALL}" \
+    -o "${stage}/${WEB_TARBALL}"; then
+    rm -rf "$stage"
+    fail "falha ao baixar ${WEB_TARBALL}"
+  fi
+  PYTHONPATH="$REPO_DIR" python3 -c "
+from pathlib import Path
+import sys
+sys.path.insert(0, '${REPO_DIR}/packaging')
+from deploy_lib import verify_downloaded_assets
+verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
+" || { rm -rf "$stage"; fail "SHA-256 de ${WEB_TARBALL} inválido"; }
+  mkdir -p "${stage}/web"
+  tar -xzf "${stage}/${WEB_TARBALL}" -C "${stage}/web"
+  publish_begin "${stage}/web/dist" "${SITE_ROOT}/web"
+  rm -rf "$stage"
   log "cliente web em ${SITE_ROOT}/web"
 }
 
@@ -218,18 +315,18 @@ sync_release_downloads() {
   tag=$1
   manifest_dir=$2
   stage=$(mktemp -d)
-  # shellcheck disable=SC2064
-  trap "rm -rf '$stage'" RETURN
   cp "${manifest_dir}/RELEASE" "${manifest_dir}/RELEASE.sig" "$stage/"
   assets=$(PYTHONPATH="$REPO_DIR" python3 -c "
 from pathlib import Path
 from crptochat import update
 info = update.parse_manifest(Path('${manifest_dir}/RELEASE').read_bytes())
-print(' '.join(sorted(info['files'])))
+names = [n for n in sorted(info['files']) if n != '${WEB_TARBALL}']
+print(' '.join(names))
 ")
   for name in $assets; do
     if ! curl -fsSL --max-time 600 "https://github.com/${CLIENT_REPO}/releases/download/${tag}/${name}" \
       -o "${stage}/${name}"; then
+      rm -rf "$stage"
       fail "falha ao baixar ${name}"
     fi
   done
@@ -239,14 +336,17 @@ import sys
 sys.path.insert(0, '${REPO_DIR}/packaging')
 from deploy_lib import verify_downloaded_assets
 verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
-"
-  mkdir -p "${SITE_ROOT}/downloads"
+" || { rm -rf "$stage"; fail "verificação de binários falhou"; }
+  mkdir -p "${DEPLOY_TMP}/downloads.merge"
+  if [ -d "${SITE_ROOT}/downloads" ]; then
+    cp -a "${SITE_ROOT}/downloads/." "${DEPLOY_TMP}/downloads.merge/"
+  fi
   for name in $assets RELEASE RELEASE.sig; do
-    tmp="${SITE_ROOT}/downloads/.${name}.new.$$"
-    cp "${stage}/${name}" "$tmp"
-    mv -f "$tmp" "${SITE_ROOT}/downloads/${name}"
+    cp "${stage}/${name}" "${DEPLOY_TMP}/downloads.merge/${name}"
   done
-  log "artefatos da release em ${SITE_ROOT}/downloads"
+  publish_begin "${DEPLOY_TMP}/downloads.merge" "${SITE_ROOT}/downloads"
+  rm -rf "$stage"
+  log "downloads em ${SITE_ROOT}/downloads"
 }
 
 backup_data() {
@@ -281,74 +381,64 @@ smoke_test_image() {
   script="$REPO_DIR/packaging/server_smoke_restricted.sh"
   [ -x "$script" ] || fail "falta $script"
   log "smoke descartável da imagem ${IMAGE} (versão ${version})"
-  sh "$script" "$IMAGE" "$version" "$SMOKE_TIMEOUT" \
-    || fail "smoke falhou; produção intacta"
-  CRPTOCHAT_SMOKE_WS_BEHIND_PROXY=1 sh "$script" "$IMAGE" "$version" "$SMOKE_TIMEOUT" \
-    || fail "smoke (atrás do proxy) falhou; produção intacta"
+  sh "$script" "$IMAGE" "$version" "$SMOKE_TIMEOUT"
+  CRPTOCHAT_SMOKE_WS_BEHIND_PROXY=1 sh "$script" "$IMAGE" "$version" "$SMOKE_TIMEOUT"
 }
 
 health_check() {
+  version=$1
+  pin=$2
   sleep "$HEALTH_WAIT"
   restarts=$(docker inspect --format '{{ .RestartCount }}' "$CONTAINER" 2>/dev/null || echo 999)
   running=$(docker inspect --format '{{ .State.Running }}' "$CONTAINER" 2>/dev/null || echo false)
   log "health: running=${running} RestartCount=${restarts}"
-  [ "$running" = true ] && [ "$restarts" = 0 ] || return 1
+  if [ "$running" != true ] || [ "$restarts" != 0 ]; then
+    return 1
+  fi
+  if ! docker logs "$CONTAINER" 2>&1 | grep -qF "relay v${version}"; then
+    log "health: banner relay v${version} ausente nos logs"
+    return 1
+  fi
+  probe_out=$(PYTHONPATH="$REPO_DIR" python3 -m crptochat.selftest --probe 127.0.0.1:7777 2>&1) || true
+  fp=$(printf '%s' "$probe_out" | sed -n 's/.*fingerprint //p' | head -n 1)
+  if [ -z "$fp" ]; then
+    log "health: fingerprint TLS não obtida"
+    return 1
+  fi
+  if [ -n "$pin" ] && [ "$fp" != "$pin" ]; then
+    log "health: fingerprint ${fp} != PIN ${pin}"
+    return 1
+  fi
+  return 0
 }
 
-deploy_release() {
+deploy_body() {
   tag=$1
   commit=$2
   pin_before=$3
   manifest_dir=$4
-
-  backup_data "$tag"
-  git_sync_commit "$commit"
-  version=$(repo_version)
-  [ -n "$version" ] || fail "versão em __init__.py não encontrada"
-
-  sync_compose_file
-  build_web_dist
-  sync_web_client
-  sync_site_pages "$pin_before" "$manifest_dir"
-  sync_release_downloads "$tag" "$manifest_dir"
-
-  compose build --quiet
-  smoke_test_image "$version"
-
-  if ! compose up -d; then
-    capture_container_diagnostics "$CONTAINER"
-    return 1
-  fi
-  if ! health_check; then
-    capture_container_diagnostics "$CONTAINER"
-    return 1
-  fi
-  new_pin=$(tls_pin_from_logs)
-  if [ -n "$pin_before" ] && [ -n "$new_pin" ] && [ "$new_pin" != "$pin_before" ]; then
-    log "PIN TLS mudou (${pin_before} -> ${new_pin})"
-    capture_container_diagnostics "$CONTAINER"
-    return 2
-  fi
-  write_state "$tag" "${new_pin:-$pin_before}"
-  log "deploy ${tag} concluído"
-  return 0
-}
-
-rollback_to() {
-  tag=$1
-  [ -n "$tag" ] || fail "rollback sem tag anterior"
-  log "rollback para ${tag}"
-  rdir=$(mktemp -d)
-  # shellcheck disable=SC2064
-  trap "rm -rf '$rdir'" RETURN
-  download_release_manifest "$tag" "$rdir"
-  commit=$(verify_release_precheck "$tag" "$rdir")
-  pin_before=${tls_pin:-}
-  [ -n "$pin_before" ] || pin_before=$(tls_pin_from_logs)
-  case $(deploy_release "$tag" "$commit" "$pin_before" "$rdir"; echo $?) in
-    0) ;;
-    *) fail "rollback não ficou saudável" ;;
-  esac
+  (
+    set -e
+    backup_data "$tag"
+    git_sync_commit "$commit"
+    version=$(repo_version)
+    [ -n "$version" ] || fail "versão em __init__.py não encontrada"
+    compose build --quiet
+    smoke_test_image "$version"
+    sync_compose_file
+    sync_web_from_release "$tag" "$manifest_dir"
+    sync_site_pages "$pin_before" "$manifest_dir"
+    sync_release_downloads "$tag" "$manifest_dir"
+    compose up -d
+    health_check "$version" "$pin_before"
+    new_pin=$(tls_pin_from_logs)
+    if [ -n "$pin_before" ] && [ -n "$new_pin" ] && [ "$new_pin" != "$pin_before" ]; then
+      log "PIN TLS mudou (${pin_before} -> ${new_pin})"
+      exit 2
+    fi
+    write_state "$tag" "${new_pin:-$pin_before}"
+    log "deploy ${tag} concluído"
+  )
 }
 
 main() {
@@ -374,7 +464,8 @@ main() {
     fail "recusa downgrade: ${new_tag} é mais antiga que ${old_tag}"
   fi
 
-  manifest_dir=$(mktemp -d)
+  DEPLOY_TMP=$(mktemp -d)
+  manifest_dir="${DEPLOY_TMP}/manifest"
   download_release_manifest "$new_tag" "$manifest_dir"
   commit=$(verify_release_precheck "$new_tag" "$manifest_dir")
 
@@ -382,17 +473,19 @@ main() {
   if [ -z "$pin_before" ]; then
     pin_before=$(tls_pin_from_logs)
   fi
+  [ -n "$pin_before" ] || fail "PIN TLS desconhecido"
 
-  rc=0
-  deploy_release "$new_tag" "$commit" "$pin_before" "$manifest_dir" || rc=$?
-  if [ "$rc" = 0 ]; then
+  snapshot_create
+
+  deploy_body "$new_tag" "$commit" "$pin_before" "$manifest_dir"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    publish_discard_prevs
     exit 0
   fi
-  if [ -n "$old_tag" ] && [ "$old_tag" != "$new_tag" ]; then
-    rollback_to "$old_tag"
-  fi
+  capture_container_diagnostics "$CONTAINER"
+  snapshot_restore
   case "$rc" in
-    1) fail "docker compose up ou health falhou" ;;
     2) fail "PIN TLS inesperado" ;;
     *) fail "deploy falhou (rc=${rc})" ;;
   esac

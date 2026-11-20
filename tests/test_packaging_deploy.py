@@ -3,11 +3,10 @@
 import re
 from pathlib import Path
 
-from crptochat import update
-
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "packaging" / "crptochat-deploy.sh"
 RELEASE_PUBKEY = "UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE="
+BOOT = ROOT / "packaging" / "crptochat-bootstrap.sh"
 
 
 def test_deploy_script_prod_defaults_and_guards():
@@ -16,15 +15,20 @@ def test_deploy_script_prod_defaults_and_guards():
     assert "flock" in text
     assert "ensure_volume" in text
     assert "refs/tags" not in text
-    assert "git_sync_commit" in text
-    assert "verify_release_precheck" in text
+    assert "snapshot_create" in text
+    assert "snapshot_restore" in text
     assert RELEASE_PUBKEY in text
     assert "CRPTOCHAT_SMOKE_WS_BEHIND_PROXY=1" in text
     assert 'docker compose -p "$COMPOSE_PROJECT"' in text
     assert "crptochat-setup_crptochat-data" in text
     assert "/etc/crptochat/deploy.env" in text
-    assert "sync_release_downloads" in text
-    assert "sync_site_pages" in text
+    assert "crptochat-web-dist.tar.gz" in text
+    assert "build_web_dist" not in text
+    assert "npm ci" not in text
+    assert "trap cleanup_tmp EXIT" in text
+    assert "trap \"rm -rf" not in text
+    assert "selftest --probe" in text
+    assert "publish_discard_prevs" in text
 
 
 def test_compose_template_exposes_public_relay_and_ws_behind_proxy():
@@ -35,10 +39,16 @@ def test_compose_template_exposes_public_relay_and_ws_behind_proxy():
     assert "name: crptochat" in compose
 
 
-def test_bootstrap_script_exists():
-    boot = ROOT / "packaging" / "crptochat-bootstrap.sh"
-    text = boot.read_text(encoding="utf-8")
+def test_bootstrap_matches_vm():
+    text = BOOT.read_text(encoding="utf-8")
+    assert "crptochat-caddy" in text
+    assert "/opt/crptochat-setup/Caddyfile" in text
+    assert "docker-compose.caddy.yml" in text
+    assert "merge #30" in text
+    assert "sed -i" not in text or "Caddyfile" not in text.split("sed -i")[0]
+    assert "cat " in text and "CADDYFILE" in text
     assert "DESFAZER.sh" in text
-    assert "caddy validate" in text
-    assert "sed -i" not in text
+    assert "HAD_ENV" in text
+    assert "PIN TLS vazio" in text
     assert "network connect crptochat" in text
+    assert "|| true" not in text.split("network connect")[1].split("\n")[0]

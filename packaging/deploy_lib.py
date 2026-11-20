@@ -28,6 +28,18 @@ PROD_DEFAULTS = {
 }
 
 SIGNING_PUBKEY_DEFAULT = "UXnFSaezyEwMqfhfGncgjf03YiSN/FvaIja1Kv6g5VE="
+WEB_DIST_TARBALL = "crptochat-web-dist.tar.gz"
+DOWNLOAD_ASSET_NAMES = (
+    "crptochat-linux-amd64",
+    "crptochat-linux-arm64",
+    "crptochat-macos-arm64",
+    "crptochat-windows-amd64.exe",
+    "install.sh",
+    "SHA256SUMS",
+    "RELEASE",
+    "RELEASE.sig",
+    WEB_DIST_TARBALL,
+)
 
 
 class DeployError(Exception):
@@ -144,6 +156,66 @@ def verify_downloaded_assets(manifest_path: Path, directory: Path) -> None:
             raise DeployError(f"SHA-256 de {name} não confere")
 
 
+def root_index_from_downloads(downloads_html: str) -> str:
+    """Página completa na raiz: mesmos conteúdos, links de binários em downloads/."""
+    text = downloads_html
+    for name in DOWNLOAD_ASSET_NAMES:
+        if name == WEB_DIST_TARBALL:
+            continue
+        text = text.replace(f'href="{name}"', f'href="downloads/{name}"')
+    return text
+
+
+def insert_caddy_ws_handle(caddyfile: str, site_host: str = "crptochat.acpt.app.br") -> str:
+    if "handle /ws" in caddyfile:
+        return caddyfile
+    lines = caddyfile.splitlines()
+    out: list[str] = []
+    in_site = False
+    depth = 0
+    for line in lines:
+        if not in_site and site_host in line and "{" in line:
+            in_site = True
+            depth = line.count("{") - line.count("}")
+            out.append(line)
+            continue
+        if in_site:
+            depth += line.count("{") - line.count("}")
+            if depth <= 0 and "}" in line:
+                out.append("    handle /ws {")
+                out.append("        reverse_proxy crptochat:7778 {")
+                out.append("            header_up X-Real-IP {remote_host}")
+                out.append("        }")
+                out.append("    }")
+                in_site = False
+        out.append(line)
+    if in_site:
+        raise DeployError(f"bloco do site {site_host} não fechado no Caddyfile")
+    return "\n".join(out) + ("\n" if caddyfile.endswith("\n") else "")
+
+
+def ensure_caddy_compose_network(compose_text: str) -> str:
+    if re.search(r"^\s*crptochat:\s*$", compose_text, re.M) and "external: true" in compose_text:
+        return compose_text
+    if "networks:" not in compose_text:
+        return compose_text.rstrip() + "\n\nnetworks:\n  crptochat:\n    external: true\n    name: crptochat\n"
+    if not re.search(r"crptochat:", compose_text):
+        return compose_text.rstrip() + "\n  crptochat:\n    external: true\n    name: crptochat\n"
+    return re.sub(
+        r"(?m)^(\s*crptochat:\s*)$",
+        r"\1\n    external: true\n    name: crptochat",
+        compose_text,
+        count=1,
+    )
+
+
+def extract_selftest_fingerprint(probe_output: str) -> str | None:
+    for line in probe_output.splitlines():
+        if "fingerprint" in line:
+            return line.split("fingerprint", 1)[-1].strip().split()[0]
+    return None
+
+
 def render_compose(template_path: Path, out_path: Path, volume_name: str) -> None:
     text = template_path.read_text(encoding="utf-8")
     text = re.sub(
@@ -199,9 +271,33 @@ def cmd_render_compose(argv: list[str]) -> int:
     return 0
 
 
+def cmd_caddy_ws(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="inp", type=Path, required=True)
+    ap.add_argument("--out", type=Path, required=True)
+    args = ap.parse_args(argv)
+    try:
+        text = insert_caddy_ws_handle(args.inp.read_text(encoding="utf-8"))
+    except DeployError as exc:
+        print(f"erro: {exc}", file=sys.stderr)
+        return 1
+    args.out.write_text(text, encoding="utf-8")
+    return 0
+
+
+def cmd_root_index(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--downloads", type=Path, required=True)
+    ap.add_argument("--out", type=Path, required=True)
+    args = ap.parse_args(argv)
+    args.out.write_text(root_index_from_downloads(args.downloads.read_text(encoding="utf-8")), encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
-        print("uso: deploy_lib.py verify-release | env-check | render-compose", file=sys.stderr)
+        print("uso: deploy_lib.py verify-release | env-check | render-compose | caddy-ws | root-index",
+              file=sys.stderr)
         return 2
     cmd = sys.argv[1]
     rest = sys.argv[2:]
@@ -211,6 +307,10 @@ def main() -> int:
         return cmd_env_check(rest)
     if cmd == "render-compose":
         return cmd_render_compose(rest)
+    if cmd == "caddy-ws":
+        return cmd_caddy_ws(rest)
+    if cmd == "root-index":
+        return cmd_root_index(rest)
     print(f"comando desconhecido: {cmd}", file=sys.stderr)
     return 2
 

@@ -3,10 +3,14 @@
 O GitHub Actions manda só a tag `vX.Y.Z` por SSH (`SSH_ORIGINAL_COMMAND`). Na VM
 o `authorized_keys` fixa o comando a `/usr/local/sbin/crptochat-deploy`.
 
+**Pré-requisito:** `/opt/crptochat` deve estar no merge do **PR #30** (ou posterior)
+com `packaging/deploy_lib.py` e este `crptochat-deploy.sh`.
+
 **Bootstrap inicial (uma vez):**
 
 ```sh
-sudo sh /opt/crptochat/packaging/crptochat-bootstrap.sh
+cd /opt/crptochat && git fetch origin && git checkout main
+sudo sh packaging/crptochat-bootstrap.sh
 ```
 
 ## Configuração
@@ -29,8 +33,9 @@ sudo sh /opt/crptochat/packaging/crptochat-bootstrap.sh
 2. Confere assinatura, versão = tag pedida, `commit` do RELEASE ancestral de `origin/main`
    **antes** de qualquer `git checkout`.
 3. Faz checkout do **commit** (não `refs/tags/v…`) e confere `__version__` no tree.
-4. Sincroniza compose (volume externo), build `web/dist`, site (`index.html` + `downloads/`),
-   binários assinados do RELEASE, smoke, `compose up`, PIN inalterado ou rollback.
+4. Após verificar o RELEASE: `git checkout` do commit, **build da imagem**, **smoke**;
+   só então troca compose, site, tarball `crptochat-web-dist.tar.gz`, binários; `compose up`;
+   PIN inalterado ou **restaura snapshot** (nunca re-renderiza compose de commit antigo).
 
 Sem `/var/lib/crptochat/deploy.state`: deriva tag e PIN do contêiner em execução ou aborta
 **antes** de mudar qualquer coisa.

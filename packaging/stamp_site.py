@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--version", help="versão (padrão: crptochat.__version__)")
     ap.add_argument("--pin", help="fingerprint TLS (SHA-256 hex) para __PIN__")
     ap.add_argument("paths", nargs="*", type=Path,
-                    default=[ROOT / "site" / "index.html", ROOT / "site" / "downloads" / "index.html"])
+                    default=[ROOT / "site" / "downloads" / "index.html"])
     args = ap.parse_args(argv)
     version = args.version or read_version(args.init)
     changed = 0

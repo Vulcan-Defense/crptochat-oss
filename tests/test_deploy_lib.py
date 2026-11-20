@@ -102,10 +102,10 @@ def test_prod_env_defaults_and_paths():
 
 
 def test_first_run_requires_state_or_container():
-    """Ponto 6: rollback exige tag; seed_state e fail closed no script."""
+    """Ponto 6: snapshot restore; seed_state e fail closed no script."""
     deploy = (ROOT / "packaging" / "crptochat-deploy.sh").read_text(encoding="utf-8")
     assert "seed_state_if_missing" in deploy
-    assert 'fail "rollback sem tag anterior"' in deploy
+    assert "snapshot_restore" in deploy
     assert "primeiro deploy" in deploy
 
 
@@ -118,6 +118,38 @@ def test_render_compose_external_volume(tmp_path):
     assert "crptochat-setup_crptochat-data" in text
     assert "7777:7777" in text
     assert "127.0.0.1:7778" not in text
+
+
+def test_subshell_set_e_aborts_mid_deploy():
+    rc = subprocess.run(  # nosec B603
+        ["sh", str(ROOT / "packaging" / "test_subshell_set_e.sh")],
+        cwd=ROOT,
+    ).returncode
+    assert rc == 0
+    text = (ROOT / "packaging" / "crptochat-deploy.sh").read_text(encoding="utf-8")
+    assert "deploy_body()" in text
+    assert "set -e" in text.split("deploy_body()")[1][:200]
+    assert "|| rc=$?" not in text
+
+
+def test_caddy_ws_inside_site_block():
+    src = (
+        "crptochat.acpt.app.br {\n"
+        "    encode gzip\n"
+        "    file_server\n"
+        "}\n"
+    )
+    out = deploy_lib.insert_caddy_ws_handle(src)
+    assert "handle /ws" in out
+    assert out.index("handle /ws") < out.rindex("}")
+    assert "reverse_proxy crptochat:7778" in out
+
+
+def test_root_index_points_downloads_assets():
+    html = '<a href="crptochat-linux-amd64" download>x</a> <a href="RELEASE">r</a>'
+    root = deploy_lib.root_index_from_downloads(html)
+    assert 'href="downloads/crptochat-linux-amd64"' in root
+    assert 'href="downloads/RELEASE"' in root
 
 
 def test_verify_downloaded_assets(tmp_path):
