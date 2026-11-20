@@ -111,10 +111,15 @@ O navegador não roda `pass`, `secret-tool` nem `vault` como o terminal. A
 integração passa então pelo que os cofres já fazem no navegador:
 
 - **Senha da chave no gerenciador de senhas.** O formulário segue o que os
-  gerenciadores procuram: nick como usuário, `current-password` para entrar,
-  `new-password` com confirmação ao criar uma chave (aí eles oferecem gerar uma
-  senha forte). Funciona com o gerenciador do Chrome, o iCloud Keychain, e com
-  Bitwarden, 1Password e KeePassXC pela extensão. **Pedir para guardar** a
+  gerenciadores procuram: nick como usuário (`autocomplete="username"`),
+  senha da chave como senha (`current-password` / `new-password` ao criar), e —
+  quando a chave ainda não está neste navegador — o campo **chave cifrada
+  (JSON)** (`name="crptochat_identity"`) para o blob do terminal ou do anexo no
+  1Password. O JSON fica cifrado; a página só o grava no navegador depois de
+  conferir a senha, e apaga o campo ao importar (não vai para
+  `localStorage`). No 1Password: item *Login* com usuário = nick, senha = frase
+  da chave, e campo personalizado ou nota com o JSON (o mesmo de
+  `identities/nick.json` ou `pass show crptochat/NICK`). **Pedir para guardar** a
   senha (Credential Management API, só no Chromium) é **opt-in**: a caixa
   "pedir ao navegador para guardar esta senha" vem desmarcada. Senha e backup da
   chave no mesmo gerenciador deixam o gerenciador como a única proteção. O

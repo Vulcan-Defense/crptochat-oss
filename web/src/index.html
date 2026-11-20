@@ -24,6 +24,10 @@
                            placeholder="wss://chat.exemplo.org"></label>
     <label>nickname <input id="nick" name="username" required spellcheck="false" autocapitalize="off"
                            autocomplete="username" maxlength="20" pattern="[A-Za-z0-9_\-]{3,20}"></label>
+    <label id="blob-row" hidden>chave cifrada (JSON)
+      <textarea id="key-blob" name="crptochat_identity" rows="3" spellcheck="false"
+                autocomplete="off" maxlength="4096"
+                placeholder='{"v":1,"nick":"…","salt":"…","key":"…"} — do 1Password ou do terminal'></textarea></label>
     <label>senha da chave <input id="pass" name="password" type="password" autocomplete="current-password"></label>
     <label id="pass2-row" hidden>repita a senha <input id="pass2" name="password2" type="password" autocomplete="new-password"></label>
     <p id="keyinfo" class="hint"></p>
@@ -44,10 +48,11 @@
     <h2>importar chave</h2>
     <p class="hint">De um backup, de outro navegador ou do terminal: o conteúdo de
       <code>pass show crptochat/NICK</code>, do cofre (nota segura ou anexo no 1Password,
-      Bitwarden, KeePassXC…) ou do arquivo <code>~/.config/crptochat/NICK.json</code>.
+      Bitwarden, KeePassXC…) ou do arquivo <code>~/.config/crptochat/identities/nick.json</code> do terminal.
       A chave continua cifrada: a senha dela é conferida aqui, no navegador.</p>
     <label>arquivo <input id="imp-file" type="file" accept=".json,.txt,application/json,text/plain"></label>
-    <label>ou cole aqui <textarea id="imp-text" rows="4" spellcheck="false" autocomplete="off"
+    <label>ou cole aqui <textarea id="imp-text" name="crptochat_identity" rows="4" spellcheck="false"
+                                  autocomplete="off" maxlength="4096"
                                   placeholder='{"v":1,"nick":"…","salt":"…","key":"…"}'></textarea></label>
     <label>senha da chave <input id="imp-pass" type="password" autocomplete="current-password"></label>
     <label class="row"><input id="imp-replace" type="checkbox"> substituir a chave deste nick que já está aqui</label>

@@ -1313,23 +1313,8 @@ command="/usr/local/bin/crptochat-deploy",restrict ssh-ed25519 AAAA… deploy-gi
 
 O comando recebe a tag em `SSH_ORIGINAL_COMMAND` e precisa validá-la de novo,
 porque é a única coisa que vem de fora; depois confere a release, faz backup,
-publica, roda o health check e volta atrás se ele falhar. Um esboço do começo:
-
-```sh
-#!/bin/sh
-# /usr/local/bin/crptochat-deploy: só aceita vX.Y.Z; qualquer outra coisa é recusada
-set -eu
-tag="${SSH_ORIGINAL_COMMAND:-}"
-case "$tag" in ''|*[!v0-9.]*) echo "tag recusada" >&2; exit 2 ;; esac   # só v, dígitos e pontos: nem espaço, nem quebra de linha
-printf '%s\n' "$tag" | grep -Eqx 'v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})' \
-    || { echo "tag recusada" >&2; exit 2; }
-cd /opt/crptochat-oss
-git fetch --quiet --tags origin
-git -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
-docker compose build --quiet
-docker run --rm --entrypoint python crptochat-server -m crptochat.selftest
-docker compose up -d
-docker exec crptochat python -m crptochat.selftest --probe 127.0.0.1:7777 --stats /data
-```
+publica, roda o health check e volta atrás se ele falhar. O script completo
+está em `packaging/crptochat-deploy.sh` (instalar na VM como
+`/usr/local/sbin/crptochat-deploy`; ver `packaging/DEPLOY.md`).
 
 Licença MIT.

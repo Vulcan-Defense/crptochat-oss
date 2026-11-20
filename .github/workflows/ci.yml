@@ -33,3 +33,20 @@ jobs:
           fi
           git fetch --no-tags --depth=1 origin "$ref"
           python packaging/check_version.py FETCH_HEAD
+
+  server-image-restricted:
+    name: Imagem do servidor (umask 077 + restrições de produção)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Simular checkout com umask 077 (arquivos 0600)
+        run: find crptochat -type f -exec chmod 600 {} +
+      - name: Construir a imagem
+        run: docker build -t crptochat-server:restricted .
+      - name: Extrair versão e smoke com restrições
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^__version__ = "\([0-9][0-9.]*\)".*/\1/p' crptochat/__init__.py | head -n1)"
+          test -n "$version"
+          chmod +x packaging/server_smoke_restricted.sh
+          packaging/server_smoke_restricted.sh crptochat-server:restricted "$version" 25

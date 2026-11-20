@@ -173,13 +173,16 @@ function refreshMode() {
   $("pass").autocomplete = creating ? "new-password" : "current-password";
   $("pass2-row").hidden = !creating;
   $("pass2").required = creating;
+  $("blob-row").hidden = anon || !creating;
   $("open-export").disabled = !has;
   $("go").textContent = anon ? "entrar anônimo" : creating ? "criar chave e entrar" : "entrar";
   const info = $("keyinfo");
   info.classList.remove("err");
   info.textContent = anon || !nickOk(nick) ? "" : has
     ? `a chave de ${nick} está neste navegador`
-    : `${nick} não tem chave neste navegador: uma chave nova será criada aqui. Já tem uma? Use "importar chave".`;
+    : creating
+      ? `${nick} não tem chave neste navegador: cole o JSON do cofre (ou use "importar chave"), ou crie uma nova.`
+      : "";
 }
 $("nick").addEventListener("input", refreshMode);
 $("anon").addEventListener("change", refreshMode);
@@ -262,13 +265,21 @@ async function importText() {
   return text;
 }
 
+function importFromBlob(text, pass, replace) {
+  const got = call("import_key", text, pass, replace);
+  const nick = got.nick;
+  $("nick").value = nick;
+  remember("crpto.nick", nick);
+  return got;
+}
+
 async function doImport(text, replace) {
   const py = await ready, st = $("imp-status");
-  const got = call("import_key", text, $("imp-pass").value, replace);
+  const got = importFromBlob(text, $("imp-pass").value, replace);
   await syncfs(py, false);
   $("imp-confirm").hidden = true;
   st.className = "hint ok"; st.textContent = `chave de ${got.nick} importada · fingerprint ${got.fingerprint}`;
-  $("nick").value = got.nick; $("imp-text").value = ""; $("imp-pass").value = ""; $("imp-file").value = "";
+  $("imp-text").value = ""; $("imp-pass").value = ""; $("imp-file").value = ""; $("key-blob").value = "";
   $("imp-replace").checked = false;
   remember("crpto.nick", got.nick);
 }
@@ -331,16 +342,32 @@ $("form").addEventListener("submit", async (ev) => {
   if (!anon) {
     if (isNew && pass !== $("pass2").value) { info.className = "hint err"; info.textContent = "as senhas não conferem"; return; }
     $("go").disabled = true; status(isNew ? "criando a chave…" : "abrindo a chave…"); await tick();
-    let opened;
+    let opened, brandNew = false;
     try {
-      opened = call(isNew ? "create_key" : "check_passphrase", nick, pass);
+      const blob = $("key-blob").value.trim();
+      if (blob) {
+        const parsed = call("parse_blob", blob);
+        if (parsed.nick.toLowerCase() !== nick.toLowerCase()) {
+          throw new Error(`o JSON é da chave de ${parsed.nick}, não de ${nick}`);
+        }
+        status("importando a chave do cofre…"); await tick();
+        opened = importFromBlob(blob, pass, false);
+        $("key-blob").value = "";
+        creating = false;
+        refreshMode();
+      } else if (isNew) {
+        opened = call("create_key", nick, pass);
+        brandNew = true;
+      } else {
+        opened = call("check_passphrase", nick, pass);
+      }
     } catch (err) {
       info.className = "hint err"; info.textContent = err.message; status(""); $("go").disabled = false; return;
     }
     offerToSave(nick, pass);
     await syncfs(py, false);
     refreshMode();                       // the key exists now: clears old warnings, enables export
-    if (isNew) {                         // no chat before the backup is offered
+    if (brandNew) {                      // no chat before the backup is offered
       afterBackup = () => launch(py, url, nick, pass, anon);
       status("");
       openExport(nick, opened.fingerprint, true);
