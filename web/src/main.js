@@ -66,20 +66,173 @@ function terminalBridge(term) {
   };
 }
 
+let keys = null;                       // crptoweb.keys (Python), once loaded
+const tick = () => new Promise((ok) => setTimeout(ok, 30));   // lets "working…" paint before scrypt
+
+function pyMessage(err) {
+  const text = String((err && err.message) || err);
+  const m = text.match(/KeyProblem: ([^\n]*)\s*$/) || text.match(/Error: ([^\n]*)\s*$/);
+  return m ? m[1].trim() : text.split("\n").filter(Boolean).pop();
+}
+
+function call(fn, ...args) {
+  try {
+    const out = keys[fn](...args);
+    return out && out.toJs ? out.toJs({ dict_converter: Object.fromEntries }) : out;
+  } catch (err) {
+    throw new Error(pyMessage(err));
+  }
+}
+
 const ready = boot().then((py) => {
+  py.runPython("import crptoweb.boot; crptoweb.boot.prepare()");
+  keys = py.pyimport("crptoweb.keys");
   status(`pronto em ${(marks.ready / 1000).toFixed(1)} s`);
-  $("go").disabled = false; $("go").textContent = "entrar";
+  $("go").disabled = false;
+  $("open-import").disabled = false;
+  refreshMode();
   return py;
 }).catch((err) => { status("falha ao carregar: " + err, true); throw err; });
 
-$("anon").addEventListener("change", () => { $("nick").disabled = $("pass").disabled = $("anon").checked; });
+// ------------------------------------------------ new key or existing one
+
+const nickOk = (nick) => /^[A-Za-z0-9_-]{3,20}$/.test(nick);
+let creating = false;
+
+function refreshMode() {
+  const anon = $("anon").checked, nick = $("nick").value.trim();
+  $("nick").disabled = $("pass").disabled = anon;
+  const has = !anon && keys && nickOk(nick) && call("has_key", nick);
+  creating = !anon && !!keys && nickOk(nick) && !has;
+  // what password managers read: a new key asks for a new password (they offer to generate one)
+  $("pass").autocomplete = creating ? "new-password" : "current-password";
+  $("pass2-row").hidden = !creating;
+  $("pass2").required = creating;
+  $("open-export").disabled = !has;
+  $("go").textContent = anon ? "entrar anônimo" : creating ? "criar chave e entrar" : "entrar";
+  const info = $("keyinfo");
+  info.classList.remove("err");
+  info.textContent = anon || !nickOk(nick) ? "" : has
+    ? `a chave de ${nick} está neste navegador`
+    : `${nick} não tem chave neste navegador: uma chave nova será criada aqui. Já tem uma? Use "importar chave".`;
+}
+$("nick").addEventListener("input", refreshMode);
+$("anon").addEventListener("change", refreshMode);
+
+// Saves nick + key passphrase in the browser's password manager where the page can ask
+// for it (Chromium); elsewhere the form's autocomplete names let the manager offer it.
+function offerToSave(nick, pass) {
+  if (!("PasswordCredential" in window) || !navigator.credentials) return;
+  try {
+    navigator.credentials.store(new PasswordCredential({ id: nick, password: pass, name: `${nick} · crptochat` }))
+      .catch(() => {});
+  } catch { /* not allowed here */ }
+}
+
+// ------------------------------------------------------- export / backup
+
+function showPanel(id) {
+  for (const p of ["import", "export"]) $(p).hidden = p !== id;
+  $("form").hidden = !!id;
+  if (id) $(id).scrollIntoView({ block: "start" });
+}
+for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => { showPanel(null); refreshMode(); });
+
+let exported = { nick: "", text: "" };
+let afterBackup = null;                // set when the backup panel was opened right after creating a key
+
+function openExport(nick, fingerprint, isNew) {
+  exported = { nick, text: call("export_key", nick) };
+  $("exp-title").textContent = isNew ? `chave de ${nick} criada: faça o backup agora` : `backup da chave de ${nick}`;
+  $("exp-why").textContent = isNew
+    ? "Ela existe só neste navegador. Se os dados do site forem apagados (no iPhone o Safari pode fazer isso sozinho) e não houver backup, este nick nunca mais poderá ser usado."
+    : "";
+  $("exp-pass").textContent = `pass insert -m crptochat/${nick.toLowerCase()}`;
+  $("exp-fp").textContent = fingerprint ? `fingerprint ${fingerprint}` : "";
+  $("exp-done").textContent = isNew ? "continuar para o chat" : "fechar";
+  $("exp-status").textContent = "";
+  showPanel("export");
+}
+
+$("open-export").addEventListener("click", () => {
+  try { openExport($("nick").value.trim(), "", false); } catch (err) { status(err.message, true); }
+});
+
+$("exp-download").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([exported.text + "\n"], { type: "application/json" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: `crptochat-${exported.nick.toLowerCase()}.json` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  $("exp-status").className = "hint ok"; $("exp-status").textContent = "arquivo baixado: guarde-o no cofre e apague a cópia solta";
+});
+
+$("exp-copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(exported.text);
+    $("exp-status").className = "hint ok"; $("exp-status").textContent = "copiada: cole no cofre (nota segura) e depois copie outra coisa por cima";
+  } catch {
+    $("exp-status").className = "hint err"; $("exp-status").textContent = "o navegador não deixou copiar; use \"baixar arquivo\"";
+  }
+});
+
+$("exp-done").addEventListener("click", () => { if (afterBackup) { const go = afterBackup; afterBackup = null; go(); } });
+
+// ------------------------------------------------------------- import
+
+$("open-import").addEventListener("click", () => { $("imp-status").textContent = ""; showPanel("import"); });
+
+$("imp-go").addEventListener("click", async () => {
+  const py = await ready, st = $("imp-status");
+  let text = $("imp-text").value;
+  const file = $("imp-file").files[0];
+  if (file) {
+    if (file.size > 4096) { st.className = "hint err"; st.textContent = "arquivo grande demais para ser uma chave"; return; }
+    text = await file.text();
+  }
+  st.className = "hint"; st.textContent = "conferindo a senha…"; await tick();
+  try {
+    const got = call("import_key", text, $("imp-pass").value, $("imp-replace").checked);
+    await syncfs(py, false);
+    st.className = "hint ok"; st.textContent = `chave de ${got.nick} importada · fingerprint ${got.fingerprint}`;
+    $("nick").value = got.nick; $("imp-text").value = ""; $("imp-pass").value = ""; $("imp-file").value = "";
+    remember("crpto.nick", got.nick);
+  } catch (err) {
+    st.className = "hint err"; st.textContent = err.message;
+  }
+});
+
+// -------------------------------------------------------------- login
 
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const py = await ready;
   const url = $("url").value.trim(), nick = $("nick").value.trim(), pass = $("pass").value, anon = $("anon").checked;
+  const info = $("keyinfo"), isNew = creating;
+  if (!anon) {
+    if (isNew && pass !== $("pass2").value) { info.className = "hint err"; info.textContent = "as senhas não conferem"; return; }
+    $("go").disabled = true; status(isNew ? "criando a chave…" : "abrindo a chave…"); await tick();
+    let opened;
+    try {
+      opened = call(isNew ? "create_key" : "check_passphrase", nick, pass);
+    } catch (err) {
+      info.className = "hint err"; info.textContent = err.message; status(""); $("go").disabled = false; return;
+    }
+    offerToSave(nick, pass);
+    await syncfs(py, false);
+    refreshMode();                       // the key exists now: clears old warnings, enables export
+    if (isNew) {                         // no chat before the backup is offered
+      afterBackup = () => launch(py, url, nick, pass, anon);
+      status("");
+      openExport(nick, opened.fingerprint, true);
+      return;
+    }
+  }
+  launch(py, url, nick, pass, anon);
+});
+
+async function launch(py, url, nick, pass, anon) {
   remember("crpto.url", url); if (!anon) remember("crpto.nick", nick);
-  $("go").disabled = true; status("abrindo a chave…");
+  $("go").disabled = true; status("conectando…");
   $("login").hidden = true; $("term").hidden = false; $("keys").hidden = false;
   const term = new Terminal({ fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 14,
                               cursorBlink: false, allowProposedApi: false, scrollback: 0,
@@ -104,4 +257,4 @@ $("form").addEventListener("submit", async (ev) => {
     clearInterval(saver);
     await syncfs(py, false).catch(() => {});
   }
-});
+}

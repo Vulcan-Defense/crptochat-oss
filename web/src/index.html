@@ -16,14 +16,56 @@
 <main id="login">
   <h1><span class="m">▓▒░</span> CRPTOCHAT <span class="m">░▒▓</span></h1>
   <p class="sub">terminal cifrado de ponta a ponta, rodando no seu navegador</p>
-  <form id="form" autocomplete="off">
-    <label>servidor <input id="url" name="url" required spellcheck="false" placeholder="wss://chat.exemplo.org"></label>
-    <label>nickname <input id="nick" name="nick" required spellcheck="false" autocapitalize="off" maxlength="24"></label>
-    <label>senha da chave <input id="pass" name="pass" type="password" autocomplete="current-password"></label>
+
+  <!-- names and autocomplete follow what password managers look for: the nick is the
+       user name, the key passphrase is the password (new-password when creating a key) -->
+  <form id="form" method="post" action="#">
+    <label>servidor <input id="url" name="server" required spellcheck="false" autocomplete="url"
+                           placeholder="wss://chat.exemplo.org"></label>
+    <label>nickname <input id="nick" name="username" required spellcheck="false" autocapitalize="off"
+                           autocomplete="username" maxlength="20" pattern="[A-Za-z0-9_\-]{3,20}"></label>
+    <label>senha da chave <input id="pass" name="password" type="password" autocomplete="current-password"></label>
+    <label id="pass2-row" hidden>repita a senha <input id="pass2" name="password2" type="password" autocomplete="new-password"></label>
+    <p id="keyinfo" class="hint"></p>
     <label class="row"><input id="anon" type="checkbox"> entrar anônimo (nada é registrado)</label>
     <button id="go" type="submit" disabled>carregando…</button>
     <p id="status" role="status">preparando o Python no navegador…</p>
+    <p class="links">
+      <button type="button" id="open-import" class="link" disabled>importar chave</button>
+      <button type="button" id="open-export" class="link" disabled>exportar / backup</button>
+    </p>
   </form>
+
+  <section id="import" class="panel" hidden>
+    <h2>importar chave</h2>
+    <p class="hint">De um backup, de outro navegador ou do terminal: o conteúdo de
+      <code>pass show crptochat/NICK</code>, do cofre (nota segura ou anexo no 1Password,
+      Bitwarden, KeePassXC…) ou do arquivo <code>~/.config/crptochat/NICK.json</code>.
+      A chave continua cifrada: a senha dela é conferida aqui, no navegador.</p>
+    <label>arquivo <input id="imp-file" type="file" accept=".json,.txt,application/json,text/plain"></label>
+    <label>ou cole aqui <textarea id="imp-text" rows="4" spellcheck="false" autocomplete="off"
+                                  placeholder='{"v":1,"nick":"…","salt":"…","key":"…"}'></textarea></label>
+    <label>senha da chave <input id="imp-pass" type="password" autocomplete="current-password"></label>
+    <label class="row"><input id="imp-replace" type="checkbox"> substituir a chave deste nick que já está aqui</label>
+    <div class="buttons"><button type="button" id="imp-go">importar</button>
+      <button type="button" class="ghost" data-close>fechar</button></div>
+    <p id="imp-status" class="hint" role="status"></p>
+  </section>
+
+  <section id="export" class="panel" hidden>
+    <h2 id="exp-title">backup da chave</h2>
+    <p id="exp-why" class="hint"></p>
+    <p class="hint">O arquivo é a chave <b>cifrada com a sua senha</b>, no mesmo formato que o terminal
+      guarda no cofre. Guarde-o no gerenciador de senhas (nota segura ou anexo) ou no
+      <code>pass</code>: <code id="exp-pass">pass insert -m crptochat/NICK</code> e cole. Quem pegar o arquivo
+      ainda precisa da senha, então não guarde os dois juntos se puder evitar.</p>
+    <p id="exp-fp" class="fp"></p>
+    <div class="buttons"><button type="button" id="exp-download">baixar arquivo</button>
+      <button type="button" id="exp-copy">copiar</button>
+      <button type="button" class="ghost" id="exp-done" data-close>fechar</button></div>
+    <p id="exp-status" class="hint" role="status"></p>
+  </section>
+
   <p class="note">A chave fica cifrada neste navegador. O servidor só vê blobs cifrados. Prova de conceito: veja web/README.md.</p>
 </main>
 <div id="term" hidden></div>
