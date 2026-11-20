@@ -6,3 +6,4 @@ build/
 dist/
 crptochat-data/
 crptochat/_build.py
+web/vendor/
