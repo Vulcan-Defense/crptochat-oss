@@ -54,6 +54,8 @@ write_desfazer() {
   chmod 755 "$DESFAZER"
 }
 
+write_desfazer
+
 install -m 755 "${REPO_DIR}/packaging/crptochat-deploy.sh" /usr/local/sbin/crptochat-deploy
 
 if [ ! -f "$DEPLOY_ENV" ]; then
@@ -98,6 +100,7 @@ if docker inspect "$CADDY_CONTAINER" >/dev/null 2>&1; then
   else
     docker network connect crptochat "$CADDY_CONTAINER"
     CONNECTED_CADDY=1
+    write_desfazer
   fi
 else
   fail "contêiner ${CADDY_CONTAINER} não encontrado"
@@ -117,6 +120,7 @@ Path('${new_cc}').write_text(text, encoding='utf-8')
   if ! cmp -s "$CADDY_COMPOSE" "$new_cc"; then
     cp "$new_cc" "$CADDY_COMPOSE"
     MODIFIED_CADDY_COMPOSE=1
+    write_desfazer
   fi
 fi
 
@@ -140,6 +144,7 @@ Path('${new_cf}').write_text(text, encoding='utf-8')
       || fail "Caddyfile inválido no contêiner"
     docker exec "$CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile \
       || fail "caddy reload falhou"
+    write_desfazer
   fi
 else
   fail "Caddyfile ausente: ${CADDYFILE}"

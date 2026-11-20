@@ -240,6 +240,9 @@ snapshot_create() {
 
 snapshot_restore() {
   log "restaurando snapshot (sem re-renderizar compose de commit antigo)"
+  if [ -n "${DEPLOY_TMP:-}" ]; then
+    echo restored > "${DEPLOY_TMP}/.snapshot_restore_done"
+  fi
   if [ -f "$SNAP_DIR/compose.yml" ]; then
     cp "$SNAP_DIR/compose.yml" "$COMPOSE_FILE"
   fi
@@ -346,6 +349,8 @@ verify_downloaded_assets(Path('${manifest_dir}/RELEASE'), Path('${stage}'))
   done
   publish_begin "${DEPLOY_TMP}/downloads.merge" "${SITE_ROOT}/downloads"
   rm -rf "$stage"
+  find "${SITE_ROOT}/downloads" -type d -exec chmod 755 {} +
+  find "${SITE_ROOT}/downloads" -type f -exec chmod 644 {} +
   log "downloads em ${SITE_ROOT}/downloads"
 }
 
@@ -476,19 +481,76 @@ main() {
   [ -n "$pin_before" ] || fail "PIN TLS desconhecido"
 
   snapshot_create
-
-  deploy_body "$new_tag" "$commit" "$pin_before" "$manifest_dir"
-  rc=$?
+  rc=0
+  deploy_try_and_restore "$new_tag" "$commit" "$pin_before" "$manifest_dir" || rc=$?
   if [ "$rc" -eq 0 ]; then
-    publish_discard_prevs
     exit 0
   fi
-  capture_container_diagnostics "$CONTAINER"
-  snapshot_restore
   case "$rc" in
     2) fail "PIN TLS inesperado" ;;
     *) fail "deploy falhou (rc=${rc})" ;;
   esac
 }
+
+deploy_try_and_restore() {
+  tag=$1
+  commit=$2
+  pin_before=$3
+  manifest_dir=$4
+  rc=0
+  deploy_body "$tag" "$commit" "$pin_before" "$manifest_dir" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    publish_discard_prevs
+    return 0
+  fi
+  capture_container_diagnostics "$CONTAINER"
+  snapshot_restore
+  return "$rc"
+}
+
+run_selftest_fail_restore() {
+  DEPLOY_TMP=$(mktemp -d)
+  COMPOSE_FILE="${DEPLOY_TMP}/compose.yml"
+  SITE_ROOT="${DEPLOY_TMP}/site"
+  CONTAINER=crptochat-selftest
+  mkdir -p "$SITE_ROOT/web" "${SITE_ROOT}/downloads" "${DEPLOY_TMP}/bin"
+  printf '%s\n' "compose-original" > "$COMPOSE_FILE"
+  printf '%s\n' "site-original" > "${SITE_ROOT}/index.html"
+  PREV_REGISTRY="${DEPLOY_TMP}/prev_registry.txt"
+  SNAP_DIR="${DEPLOY_TMP}/snap"
+  : > "$PREV_REGISTRY"
+  {
+    echo '#!/bin/sh'
+    echo 'case "$1" in'
+    echo '  inspect) printf "%s\n" "image-id-selftest"; exit 0 ;;'
+    echo 'esac'
+    echo 'exit 0'
+  } > "${DEPLOY_TMP}/bin/docker"
+  chmod 755 "${DEPLOY_TMP}/bin/docker"
+  PATH="${DEPLOY_TMP}/bin:${PATH}"
+  export PATH DEPLOY_TMP COMPOSE_FILE SITE_ROOT CONTAINER PREV_REGISTRY SNAP_DIR
+  snapshot_create
+  deploy_body() {
+    (
+      set -e
+      printf '%s\n' "compose-tampered" > "$COMPOSE_FILE"
+      printf '%s\n' "site-tampered" > "${SITE_ROOT}/index.html"
+      exit 1
+    )
+  }
+  rc=0
+  deploy_try_and_restore v9.9.9 deadbeef 0123456789abcdef0123456789abcdef0123456789abcdef0123456789 "${DEPLOY_TMP}/manifest" || rc=$?
+  [ "$rc" -ne 0 ] || fail "selftest: deploy deveria falhar"
+  [ -f "${DEPLOY_TMP}/.snapshot_restore_done" ] || fail "selftest: snapshot_restore não rodou"
+  grep -q "compose-original" "$COMPOSE_FILE" || fail "selftest: compose não restaurado"
+  grep -q "site-original" "${SITE_ROOT}/index.html" || fail "selftest: site não restaurado"
+  log "selftest fail-restore ok"
+  rm -rf "$DEPLOY_TMP"
+}
+
+if [ "${CRPTOCHAT_DEPLOY_SELFTEST:-}" = fail-restore ]; then
+  run_selftest_fail_restore
+  exit 0
+fi
 
 main
