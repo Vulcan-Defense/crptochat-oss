@@ -36,7 +36,7 @@ jobs:
         run: cd web && npm ci --no-audit --no-fund --ignore-scripts
       - name: crptochat (o servidor do teste ponta a ponta) e o Chromium do Playwright
         run: |
-          pip install -e .
+          pip install -e ".[web]"
           cd web && npx --no-install playwright install --with-deps chromium
       - name: Build
         run: |

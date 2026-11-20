@@ -45,7 +45,14 @@ const server = spawn(PY, ["-m", "crptochat.server", "--data", path.join(TMP, "sr
                           "--no-stats", "--ws-port", String(wsPort), "--ws-origin", origin], { stdio: ["ignore", "pipe", "pipe"] });
 let serverOut = "";
 server.stdout.on("data", (d) => (serverOut += d)); server.stderr.on("data", (d) => (serverOut += d));
-for (let i = 0; i < 100 && !/cliente web/.test(serverOut); i++) await new Promise((ok) => setTimeout(ok, 100));
+for (let i = 0; i < 100 && !/cliente web/.test(serverOut) && server.exitCode === null; i++) {
+  await new Promise((ok) => setTimeout(ok, 100));
+}
+if (!/cliente web/.test(serverOut)) {          // no WebSocket entrance: nothing below can work
+  console.log("FALHOU  servidor com a entrada WebSocket não subiu (pip install -e '.[web]'?)\n" + serverOut.slice(-2000));
+  server.kill(); site.close();
+  process.exit(1);
+}
 
 const browser = await chromium.launch();
 const termText = (p) => p.evaluate(() => {
