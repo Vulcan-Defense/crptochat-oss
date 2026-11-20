@@ -22,6 +22,7 @@ on:
     paths:
       - "crptochat/**"
       - "packaging/**"
+      - "web/**"
       - "pyproject.toml"
       - ".github/workflows/release-client.yml"
     tags:
@@ -141,9 +142,37 @@ jobs:
           path: out/${{ matrix.artifact }}
           if-no-files-found: error
 
+  build-web:
+    name: build-web-dist
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12.8"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.12.0"
+      - name: Build web/dist (publicado na release como tarball)
+        run: |
+          set -euo pipefail
+          python web/fetch_vendor.py
+          cd web && npm ci --no-audit --no-fund --ignore-scripts
+          cd ..
+          python web/build.py
+          tar -czf crptochat-web-dist.tar.gz -C web dist
+          ls -la crptochat-web-dist.tar.gz web/dist | head
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: crptochat-web-dist
+          path: crptochat-web-dist.tar.gz
+          if-no-files-found: error
+
   publish:
     name: publish-crptochat-client
-    needs: [prepare, build]
+    needs: [prepare, build, build-web]
     # Runs from main or a version tag only; a manual run on another branch
     # just builds and tests the binaries.
     if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.ref_type == 'tag') }}
@@ -174,7 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for required in crptochat-linux-amd64 crptochat-linux-arm64; do
+          for required in crptochat-linux-amd64 crptochat-linux-arm64 crptochat-web-dist.tar.gz; do
             if [ ! -f "release-assets/$required" ]; then
               echo "::error::$required não foi gerado; nada foi publicado"
               exit 1
@@ -184,7 +213,8 @@ jobs:
           VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' crptochat/__init__.py)"
           # version and build time live inside the signed file, so an old
           # release cannot be passed off as new (binaries also refuse older builds)
-          python -m crptochat.update manifest "$VERSION" "${GITHUB_SHA::7}" "$BUILT" release-assets/crptochat-* \
+          python -m crptochat.update manifest "$VERSION" "${GITHUB_SHA::7}" "$BUILT" \
+            release-assets/crptochat-* \
             > release-assets/RELEASE
           cat release-assets/RELEASE
           if [ -n "${CLIENT_SIGNING_PUBKEY:-}" ]; then
