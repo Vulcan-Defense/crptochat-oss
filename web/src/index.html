@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:*; img-src 'self' data:; font-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0b12">
+<title>crptochat</title>
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="login">
+  <h1><span class="m">▓▒░</span> CRPTOCHAT <span class="m">░▒▓</span></h1>
+  <p class="sub">terminal cifrado de ponta a ponta, rodando no seu navegador</p>
+  <form id="form" autocomplete="off">
+    <label>servidor <input id="url" name="url" required spellcheck="false" placeholder="wss://chat.exemplo.org"></label>
+    <label>nickname <input id="nick" name="nick" required spellcheck="false" autocapitalize="off" maxlength="24"></label>
+    <label>senha da chave <input id="pass" name="pass" type="password" autocomplete="current-password"></label>
+    <label class="row"><input id="anon" type="checkbox"> entrar anônimo (nada é registrado)</label>
+    <button id="go" type="submit" disabled>carregando…</button>
+    <p id="status" role="status">preparando o Python no navegador…</p>
+  </form>
+  <p class="note">A chave fica cifrada neste navegador. O servidor só vê blobs cifrados. Prova de conceito: veja web/README.md.</p>
+</main>
+<div id="term" hidden></div>
+<div id="keys" hidden>
+  <button data-k="esc">Esc</button><button data-k="tab">Tab</button><button data-k="ctrl">Ctrl</button>
+  <button data-k="up">↑</button><button data-k="down">↓</button><button data-k="left">←</button><button data-k="right">→</button>
+  <button data-k="slash">/</button><button data-k="pgup">PgUp</button><button data-k="pgdn">PgDn</button>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

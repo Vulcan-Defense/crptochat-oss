@@ -163,3 +163,19 @@ def test_mailbox_uses_the_ml_kem_prekey_and_refuses_a_downgrade(home):
             await until(lambda: h.server.db.execute(
                 "SELECT kem IS NOT NULL FROM prekeys WHERE nick_lower='bob'").fetchone()[0] == 1)
     run(main())
+
+
+def test_mlkem_is_only_on_where_it_actually_works(monkeypatch):
+    """Pyodide's cryptography has the mlkem module but its OpenSSL lacks the
+    algorithm: importing works, generating fails. That must mean no PQ layer,
+    not a client that breaks at connect."""
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric import mlkem
+
+    def unsupported():
+        raise UnsupportedAlgorithm("ML-KEM-768 is not supported by this backend.")
+
+    monkeypatch.setattr(mlkem.MLKEM768PrivateKey, "generate", staticmethod(unsupported))
+    assert crypto._load_mlkem() is None
+    monkeypatch.undo()
+    assert crypto._load_mlkem() is mlkem
