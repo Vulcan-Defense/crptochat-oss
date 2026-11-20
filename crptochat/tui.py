@@ -921,8 +921,9 @@ class ChatApp(App):
             badges.append("AUSENTE  ", style=f"bold {YELLOW}")
         if self.update_info:
             badges.append(f"↑ {self.update_info['version']} DISPONÍVEL (/update)  ", style=f"bold {GREEN}")
+        secure = self.client.tls or getattr(self.client, "external_tls", False)
         right = Text.assemble(badges, ("● ", dot), (label, f"bold {dot}"), ("  ", ""),
-                              ("TLS " if self.client.tls else "SEM TLS ", GREEN if self.client.tls else YELLOW),
+                              ("TLS " if secure else "SEM TLS ", GREEN if secure else YELLOW),
                               ("· E2EE ", GREEN))
         gap = max(1, self.width_now() - left.cell_len - right.cell_len)
         self.query_one("#topbar", Static).update(Text.assemble(left, " " * gap, right))

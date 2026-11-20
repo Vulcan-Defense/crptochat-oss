@@ -39,12 +39,24 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-try:      # ML-KEM (FIPS 203) arrived in cryptography 47; without it, no post-quantum layer
-    from cryptography.hazmat.primitives.asymmetric import mlkem as _mlkem
-    HAS_MLKEM = True
-except ImportError:      # pragma: no cover
-    _mlkem = None
-    HAS_MLKEM = False
+def _load_mlkem():
+    """ML-KEM (FIPS 203) arrived in cryptography 47; without it, no post-quantum layer.
+    Importing is not enough: the module exists even where the OpenSSL underneath
+    has no ML-KEM (e.g. the build in Pyodide), and then only using it fails."""
+    try:
+        from cryptography.exceptions import UnsupportedAlgorithm
+        from cryptography.hazmat.primitives.asymmetric import mlkem
+    except ImportError:      # pragma: no cover
+        return None
+    try:
+        mlkem.MLKEM768PrivateKey.generate()
+    except UnsupportedAlgorithm:      # pragma: no cover
+        return None
+    return mlkem
+
+
+_mlkem = _load_mlkem()
+HAS_MLKEM = _mlkem is not None
 
 SCRYPT_N = 2 ** 15
 PAD_BLOCK = 64

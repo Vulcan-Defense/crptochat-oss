@@ -190,12 +190,15 @@ class ChatClient:
     def __init__(self, host: str, port: int, identity: Identity, store: Store, on_event,
                  tls: bool = True, pin: str | None = None, reg_token: str | None = None,
                  p2p_port: int = 0, p2p_host: str | None = None, download_dir: str | None = None,
-                 guest: bool = False):
+                 guest: bool = False, external_tls: bool = False):
         self.host, self.port = host, port
         self.identity = identity
         self.store = store
         self.on_event = on_event
         self.tls = tls
+        # the transport is TLS but not this client's own (the browser's wss://, checked
+        # against public CAs, no pinning): only shown to the person, nothing else changes
+        self.external_tls = external_tls
         self.pin = pin
         self.reg_token = reg_token
         self.guest = guest

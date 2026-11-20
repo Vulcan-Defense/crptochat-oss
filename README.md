@@ -314,10 +314,10 @@ crptochat-server --ws-host 0.0.0.0 --ws-port 7778 --ws-origin https://app.exempl
   compressão; binário, quebra de linha ou tamanho acima disso encerram a
   conexão.
 
-Esta é a primeira etapa do cliente de navegador. O cliente em si (o crptochat
-rodando no navegador) virá em separado e **não** será servido por este
-servidor: a página precisa vir de outro lugar, porque quem serve o código do
-cliente web consegue trocá-lo.
+Esta é a base do cliente de navegador. O cliente em si (o crptochat rodando no
+navegador, hoje uma prova de conceito em [`web/`](web/README.md)) **não** será
+servido por este servidor: a página precisa vir de outro lugar, porque quem
+serve o código do cliente web consegue trocá-lo.
 
 ## Cliente
 
