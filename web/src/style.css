@@ -42,3 +42,5 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid #3
 .links { margin: 0; display: flex; gap: 16px; justify-content: center; }
 button.link { background: none; color: var(--cyan); padding: 4px 0; text-decoration: underline; font-size: 13px; }
 button.link:disabled { color: var(--dim); text-decoration: none; }
+.danger { display: grid; gap: 10px; border: 1px solid #ff6b6b; border-radius: 6px; padding: 12px; }
+button.danger { background: #ff6b6b; color: var(--bg); border: 0; }

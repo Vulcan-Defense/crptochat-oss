@@ -119,9 +119,11 @@ function refreshMode() {
 $("nick").addEventListener("input", refreshMode);
 $("anon").addEventListener("change", refreshMode);
 
-// Saves nick + key passphrase in the browser's password manager where the page can ask
-// for it (Chromium); elsewhere the form's autocomplete names let the manager offer it.
+// Asks the browser's password manager to keep nick + key passphrase (Chromium), only when
+// the person ticked "pedir ao navegador para guardar esta senha" (off by default): the
+// passphrase and the backup of the key in the same manager leave it as the only protection.
 function offerToSave(nick, pass) {
+  if (!$("save-pw").checked) return;
   if (!("PasswordCredential" in window) || !navigator.credentials) return;
   try {
     navigator.credentials.store(new PasswordCredential({ id: nick, password: pass, name: `${nick} · crptochat` }))
@@ -158,11 +160,15 @@ $("open-export").addEventListener("click", () => {
   try { openExport($("nick").value.trim(), "", false); } catch (err) { status(err.message, true); }
 });
 
-$("exp-download").addEventListener("click", () => {
-  const url = URL.createObjectURL(new Blob([exported.text + "\n"], { type: "application/json" }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: `crptochat-${exported.nick.toLowerCase()}.json` });
+function download(nick, text) {
+  const url = URL.createObjectURL(new Blob([text + "\n"], { type: "application/json" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: `crptochat-${nick.toLowerCase()}.json` });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+$("exp-download").addEventListener("click", () => {
+  download(exported.nick, exported.text);
   $("exp-status").className = "hint ok"; $("exp-status").textContent = "arquivo baixado: guarde-o no cofre e apague a cópia solta";
 });
 
@@ -181,24 +187,73 @@ $("exp-done").addEventListener("click", () => { if (afterBackup) { const go = af
 
 $("open-import").addEventListener("click", () => { $("imp-status").textContent = ""; showPanel("import"); });
 
-$("imp-go").addEventListener("click", async () => {
-  const py = await ready, st = $("imp-status");
+async function importText() {
   let text = $("imp-text").value;
   const file = $("imp-file").files[0];
   if (file) {
-    if (file.size > 4096) { st.className = "hint err"; st.textContent = "arquivo grande demais para ser uma chave"; return; }
+    if (file.size > 4096) throw new Error("arquivo grande demais para ser uma chave");
     text = await file.text();
   }
+  return text;
+}
+
+async function doImport(text, replace) {
+  const py = await ready, st = $("imp-status");
+  const got = call("import_key", text, $("imp-pass").value, replace);
+  await syncfs(py, false);
+  $("imp-confirm").hidden = true;
+  st.className = "hint ok"; st.textContent = `chave de ${got.nick} importada · fingerprint ${got.fingerprint}`;
+  $("nick").value = got.nick; $("imp-text").value = ""; $("imp-pass").value = ""; $("imp-file").value = "";
+  $("imp-replace").checked = false;
+  remember("crpto.nick", got.nick);
+}
+
+let pendingReplace = null;             // the blob waiting for "apagar a atual e importar"
+
+$("imp-go").addEventListener("click", async () => {
+  const st = $("imp-status");
+  $("imp-confirm").hidden = true; pendingReplace = null;
   st.className = "hint"; st.textContent = "conferindo a senha…"; await tick();
   try {
-    const got = call("import_key", text, $("imp-pass").value, $("imp-replace").checked);
-    await syncfs(py, false);
-    st.className = "hint ok"; st.textContent = `chave de ${got.nick} importada · fingerprint ${got.fingerprint}`;
-    $("nick").value = got.nick; $("imp-text").value = ""; $("imp-pass").value = ""; $("imp-file").value = "";
-    remember("crpto.nick", got.nick);
+    const text = await importText();
+    try {
+      await doImport(text, false);       // the same key (or no key here): nothing is lost
+    } catch (err) {
+      const nick = call("parse_blob", text).nick;
+      if (!$("imp-replace").checked || !call("has_key", nick) || !/substituir/.test(err.message)) throw err;
+      // replacing destroys the key kept here: one more, explicit step, with a way out
+      pendingReplace = { text, nick };
+      st.className = "hint"; st.textContent = "";
+      $("imp-confirm-text").textContent =
+        `A chave de ${nick} que está neste navegador será APAGADA de vez e trocada pela importada. ` +
+        `Se ela não tiver backup, o que ela registrou (o nick ${nick} neste servidor) fica inacessível. ` +
+        `Exporte a atual antes, se ainda não exportou.`;
+      $("imp-confirm").hidden = false;
+    }
   } catch (err) {
     st.className = "hint err"; st.textContent = err.message;
   }
+});
+
+$("imp-export-current").addEventListener("click", () => {
+  if (!pendingReplace) return;
+  try {
+    download(pendingReplace.nick, call("export_key", pendingReplace.nick));
+    $("imp-status").className = "hint ok";
+    $("imp-status").textContent = `chave atual de ${pendingReplace.nick} exportada; guarde o arquivo antes de continuar`;
+  } catch (err) { $("imp-status").className = "hint err"; $("imp-status").textContent = err.message; }
+});
+
+$("imp-confirm-go").addEventListener("click", async () => {
+  if (!pendingReplace) return;
+  const { text } = pendingReplace;
+  pendingReplace = null;
+  try { await doImport(text, true); } catch (err) { $("imp-status").className = "hint err"; $("imp-status").textContent = err.message; }
+});
+
+$("imp-confirm-cancel").addEventListener("click", () => {
+  pendingReplace = null; $("imp-confirm").hidden = true;
+  $("imp-status").className = "hint"; $("imp-status").textContent = "nada foi alterado";
 });
 
 // -------------------------------------------------------------- login
