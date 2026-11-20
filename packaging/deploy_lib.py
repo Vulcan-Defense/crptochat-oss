@@ -194,19 +194,123 @@ def insert_caddy_ws_handle(caddyfile: str, site_host: str = "crptochat.acpt.app.
     return "\n".join(out) + ("\n" if caddyfile.endswith("\n") else "")
 
 
+def _toplevel_section_index(lines: list[str], name: str) -> int | None:
+    for i, line in enumerate(lines):
+        if line == f"{name}:":
+            return i
+    return None
+
+
+def _caddy_service_network_ok(lines: list[str]) -> bool:
+    in_caddy = False
+    caddy_indent = 0
+    in_networks = False
+    has_crptochat = False
+    for line in lines:
+        if re.match(r"^\s+caddy:\s*$", line):
+            in_caddy = True
+            caddy_indent = len(line) - len(line.lstrip())
+            in_networks = False
+            has_crptochat = False
+            continue
+        if not in_caddy:
+            continue
+        if line.strip() and (len(line) - len(line.lstrip())) <= caddy_indent:
+            in_caddy = False
+            continue
+        indent = len(line) - len(line.lstrip())
+        if line.strip() == "networks:" and indent == caddy_indent + 2:
+            in_networks = True
+            continue
+        if in_networks and indent >= caddy_indent + 4 and "crptochat" in line:
+            has_crptochat = True
+        if in_networks and line.strip() and indent <= caddy_indent + 2:
+            in_networks = False
+    return has_crptochat
+
+
+def _toplevel_crptochat_network_ok(lines: list[str]) -> bool:
+    idx = _toplevel_section_index(lines, "networks")
+    if idx is None:
+        return False
+    end = len(lines)
+    for j in range(idx + 1, len(lines)):
+        if lines[j] and not lines[j][0].isspace() and lines[j].endswith(":"):
+            end = j
+            break
+    block = "\n".join(lines[idx:end])
+    return "crptochat:" in block and "external: true" in block
+
+
 def ensure_caddy_compose_network(compose_text: str) -> str:
-    if re.search(r"^\s*crptochat:\s*$", compose_text, re.M) and "external: true" in compose_text:
+    lines = compose_text.splitlines()
+    if _toplevel_crptochat_network_ok(lines) and _caddy_service_network_ok(lines):
         return compose_text
-    if "networks:" not in compose_text:
-        return compose_text.rstrip() + "\n\nnetworks:\n  crptochat:\n    external: true\n    name: crptochat\n"
-    if not re.search(r"crptochat:", compose_text):
-        return compose_text.rstrip() + "\n  crptochat:\n    external: true\n    name: crptochat\n"
-    return re.sub(
-        r"(?m)^(\s*crptochat:\s*)$",
-        r"\1\n    external: true\n    name: crptochat",
-        compose_text,
-        count=1,
-    )
+    vol_idx = _toplevel_section_index(lines, "volumes")
+    if vol_idx is None:
+        raise DeployError("compose do Caddy sem seção volumes:")
+    if not _toplevel_crptochat_network_ok(lines):
+        lines = (
+            lines[:vol_idx]
+            + [
+                "networks:",
+                "  crptochat:",
+                "    external: true",
+                "    name: crptochat",
+                "",
+            ]
+            + lines[vol_idx:]
+        )
+    if not _caddy_service_network_ok(lines):
+        lines = _add_crptochat_to_caddy_service(lines)
+    return "\n".join(lines) + ("\n" if compose_text.endswith("\n") else "")
+
+
+def _add_crptochat_to_caddy_service(lines: list[str]) -> list[str]:
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s+caddy:\s*$", line):
+            continue
+        indent = len(line) - len(line.lstrip())
+        j = i + 1
+        net_start: int | None = None
+        while j < len(lines):
+            cur = lines[j]
+            if cur.strip() and (len(cur) - len(cur.lstrip())) <= indent:
+                break
+            cur_indent = len(cur) - len(cur.lstrip())
+            if cur.strip() == "networks:" and cur_indent == indent + 2:
+                net_start = j
+                break
+            j += 1
+        if net_start is None:
+            insert = [
+                " " * (indent + 2) + "networks:",
+                " " * (indent + 4) + "- default",
+                " " * (indent + 4) + "- crptochat",
+            ]
+            return lines[: i + 1] + insert + lines[i + 1 :]
+        k = net_start + 1
+        has_default = False
+        has_crptochat = False
+        last_net_line = net_start
+        while k < len(lines):
+            cur = lines[k]
+            if cur.strip() and (len(cur) - len(cur.lstrip())) <= indent + 2:
+                break
+            if "crptochat" in cur:
+                has_crptochat = True
+            if re.search(r"\bdefault\b", cur):
+                has_default = True
+            last_net_line = k
+            k += 1
+        if has_crptochat:
+            return lines
+        additions: list[str] = []
+        if not has_default:
+            additions.append(" " * (indent + 4) + "- default")
+        additions.append(" " * (indent + 4) + "- crptochat")
+        return lines[: last_net_line + 1] + additions + lines[last_net_line + 1 :]
+    raise DeployError("compose do Caddy sem serviço caddy")
 
 
 def extract_selftest_fingerprint(probe_output: str) -> str | None:
