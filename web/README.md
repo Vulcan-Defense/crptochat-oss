@@ -34,6 +34,27 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
   - nada de analytics nem fontes externas.
   - Exceção: `style-src` precisa de `'unsafe-inline'`, porque o xterm.js
     aplica estilos inline. Estilo não executa código.
+  - **O host precisa mandar cabeçalhos HTTP.** Algumas proteções não valem
+    num `<meta>`: o navegador ignora `frame-ancestors` ali. Para a página não
+    poder ser embutida noutro site (clickjacking), quem serve o `dist/` precisa
+    responder com:
+
+    ```
+    Content-Security-Policy: frame-ancestors 'none'
+    X-Frame-Options: DENY
+    ```
+
+    Vale também mandar a CSP inteira por cabeçalho, além do `<meta>`.
+- **Sem pin de certificado no navegador.** O terminal fixa o certificado do
+  servidor na primeira conexão (TOFU, `--pin`, `--reset-pin`). O navegador não
+  deixa a página fazer isso: o `wss://` é conferido só contra as CAs públicas
+  em que o navegador confia, então o servidor precisa de um certificado de CA
+  pública. Quem conseguir um certificado válido para o domínio (uma CA
+  comprometida, o próprio host) pode se pôr no meio da conexão. Vê os
+  **metadados** (quem conecta, quando, tamanhos), mas **não o conteúdo**: a
+  cifra de ponta a ponta continua valendo, e uma troca da chave de um contato
+  aparece como mudança de fingerprint. Na interface aparece "TLS" para
+  `wss://`.
 - **`build.py`** gera `dist/`, que é o site estático:
   - `app.zip` é determinístico (datas e ordem fixas) e leva `crptochat/` (sem
     os módulos do servidor) e `crptoweb/`;

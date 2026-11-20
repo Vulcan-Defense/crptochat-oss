@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-from urllib.parse import urlsplit
 
 # Textual reads this when it is first imported (textual.constants), so before driver.py
 os.environ["TEXTUAL_DRIVER"] = "crptoweb.driver:XtermDriver"
 
 from . import driver  # noqa: E402
+from .wire import check_url  # noqa: E402
 
 HOME = "/data/home"            # IndexedDB-backed (mounted and synced by main.js)
 
@@ -19,16 +19,6 @@ HOME = "/data/home"            # IndexedDB-backed (mounted and synced by main.js
 async def _inline(func, /, *args, **kwargs):
     # no threads in the browser: run it here (the screen waits while it works)
     return func(*args, **kwargs)
-
-
-def check_url(url: str) -> tuple[str, int]:
-    parts = urlsplit(url)
-    local = parts.hostname in ("localhost", "127.0.0.1", "::1")
-    if parts.scheme != "wss" and not (parts.scheme == "ws" and local):
-        raise ValueError("use wss:// (ws:// só para localhost)")
-    if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
-        raise ValueError("endereço do servidor inválido")
-    return parts.hostname, parts.port or (443 if parts.scheme == "wss" else 80)
 
 
 def open_identity(nick: str, passphrase: str):
@@ -57,7 +47,7 @@ async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = Fa
     prepare()
     driver.TERMINAL = terminal
 
-    host, port = check_url(url)
+    host, port, tls = check_url(url)
     from crptochat import crypto
     from crptochat.client import ChatClient
     from crptochat.store import Store
@@ -79,7 +69,9 @@ async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = Fa
     store = Store(f"{host}:{port}")
 
     def factory(on_event):
-        return ChatClient(host, port, identity, store, on_event, tls=False, guest=guest,
+        # tls=False: the client opens no TLS of its own (the browser does, for wss://);
+        # external_tls tells the interface the link is TLS all the same
+        return ChatClient(host, port, identity, store, on_event, tls=False, external_tls=tls, guest=guest,
                           download_dir=os.path.join(HOME, "downloads"))
 
     fatal = await ChatApp(factory).run_async()

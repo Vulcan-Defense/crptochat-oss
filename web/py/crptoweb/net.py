@@ -11,9 +11,9 @@ from __future__ import annotations
 import asyncio
 
 from pyodide.ffi import create_proxy
-from js import WebSocket
+from js import WebSocket, console
 
-MAX_LINE = 256 * 1024
+from .wire import FrameTooBig, frame_bytes
 
 
 class WebSocketStream:
@@ -46,11 +46,21 @@ class WebSocketStream:
     # -------------------------------------------------------- JS callbacks
 
     def _on_message(self, event) -> None:
+        # runs inside a JS callback: nothing here may raise
         data = event.data
-        if not isinstance(data, str) or len(data) > MAX_LINE:
+        if not isinstance(data, str):
+            self.close()                      # binary: not this protocol
+            return
+        try:
+            line = frame_bytes(data)
+        except FrameTooBig:
+            console.warn("crptochat: frame do servidor acima do limite do protocolo; conexão encerrada")
             self.close()
             return
-        self.inbox.put_nowait(data.encode("utf-8") + b"\n")
+        if line is None:
+            console.warn("crptochat: frame do servidor com texto inválido (não é UTF-8); descartado")
+            return
+        self.inbox.put_nowait(line)
 
     def _on_close(self, _event) -> None:
         if not self.opened.done():
