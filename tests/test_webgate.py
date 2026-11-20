@@ -15,7 +15,9 @@ from crptochat import client as client_mod  # noqa: E402
 from crptochat import crypto  # noqa: E402
 from crptochat.protocol import MAX_LINE  # noqa: E402
 from crptochat.server import ensure_cert, make_ssl_context  # noqa: E402
-from crptochat.webgate import WebGate, check_origin, client_address  # noqa: E402
+from crptochat.webgate import (  # noqa: E402
+    WebGate, check_origin, client_address, parse_trusted_proxy, validate_plain_ws_bind,
+)
 
 ORIGIN = "https://app.exemplo.org"
 
@@ -76,9 +78,10 @@ class WSStream:
         await self.conn.wait_closed()
 
 
-async def gate_for(h, origins=(ORIGIN,), ssl_ctx=None):
-    gate = WebGate(h.server, list(origins), ssl_ctx, behind_proxy=ssl_ctx is None)
-    port = await gate.start("127.0.0.1", 0)
+async def gate_for(h, origins=(ORIGIN,), ssl_ctx=None, plain_remote=False, trusted=()):
+    gate = WebGate(h.server, list(origins), ssl_ctx, plain_remote=plain_remote, trusted_proxies=list(trusted))
+    host = "0.0.0.0" if plain_remote else "127.0.0.1"
+    port = await gate.start(host, 0)
     return gate, port
 
 
@@ -178,7 +181,32 @@ def test_wss_with_its_own_certificate(home, tmp_path):
             ctx.check_hostname = False                    # test certificate, issued for "crptochat"
             async with connect(f"wss://127.0.0.1:{port}", origin=ORIGIN, ssl=ctx) as ws:
                 assert json.loads(await ws.recv())["t"] == "welcome"
-            assert gate.behind_proxy is False
+            assert gate.plain_remote is False
+            await gate.stop()
+    run(main())
+
+
+def test_plain_ws_on_non_loopback_needs_behind_proxy(home):
+    async def main():
+        async with Harness(home) as h:
+            with pytest.raises(ValueError, match="loopback"):
+                validate_plain_ws_bind("0.0.0.0", False, None)
+            gate = WebGate(h.server, [ORIGIN], None, plain_remote=True, trusted_proxies=["127.0.0.0/8"])
+            port = await gate.start("0.0.0.0", 0)
+            async with connect(f"ws://127.0.0.1:{port}", origin=ORIGIN) as ws:
+                assert json.loads(await ws.recv())["t"] == "welcome"
+            await gate.stop()
+    run(main())
+
+
+def test_trusted_proxy_network_uses_real_ip(home):
+    async def main():
+        async with Harness(home) as h:
+            gate, port = await gate_for(h, plain_remote=True, trusted=["127.0.0.0/8"])
+            url = f"ws://127.0.0.1:{port}"
+            hdr = {"X-Real-IP": "203.0.113.8"}
+            async with connect(url, origin=ORIGIN, additional_headers=hdr) as ws:
+                assert json.loads(await ws.recv())["your_ip"] == "203.0.113.8"
             await gate.stop()
     run(main())
 
@@ -187,10 +215,9 @@ def test_configuration_is_refused_when_unsafe(home):
     async def main():
         async with Harness(home) as h:
             with pytest.raises(ValueError, match="origem"):
-                WebGate(h.server, [], None, True)
-            plain = WebGate(h.server, [ORIGIN], None, True)
+                WebGate(h.server, [], None, plain_remote=False, trusted_proxies=[])
             with pytest.raises(ValueError, match="loopback"):
-                await plain.start("0.0.0.0", 0)  # nosec B104 - must be refused
+                await WebGate(h.server, [ORIGIN], None, plain_remote=False, trusted_proxies=[]).start("0.0.0.0", 0)
     run(main())
 
 
@@ -207,9 +234,18 @@ def test_good_origins():
 
 
 def test_client_address():
-    assert client_address(("127.0.0.1", 5), "1.2.3.4, 5.6.7.8", True) == "5.6.7.8"
-    assert client_address(("127.0.0.1", 5), "2001:db8::1", True) == "2001:db8::1"
-    assert client_address(("127.0.0.1", 5), "1.2.3.4, lixo", True) == "127.0.0.1"
-    assert client_address(("127.0.0.1", 5), None, True) == "127.0.0.1"
-    assert client_address(("192.0.2.1", 5), "1.2.3.4", True) == "192.0.2.1"     # only a loopback proxy is trusted
-    assert client_address(("127.0.0.1", 5), "1.2.3.4", False) == "127.0.0.1"    # TLS mode: no proxy at all
+    trusted = (parse_trusted_proxy("172.16.0.0/12"),)
+    assert client_address(("127.0.0.1", 5), "1.2.3.4, 5.6.7.8", None, behind_loopback=True, trusted_networks=()) == "5.6.7.8"
+    assert client_address(("127.0.0.1", 5), "2001:db8::1", None, behind_loopback=True, trusted_networks=()) == "2001:db8::1"
+    assert client_address(("127.0.0.1", 5), "1.2.3.4, lixo", None, behind_loopback=True, trusted_networks=()) == "127.0.0.1"
+    assert client_address(("127.0.0.1", 5), None, None, behind_loopback=True, trusted_networks=()) == "127.0.0.1"
+    assert client_address(("192.0.2.1", 5), "1.2.3.4", None, behind_loopback=True, trusted_networks=()) == "192.0.2.1"
+    assert client_address(("127.0.0.1", 5), "1.2.3.4", None, behind_loopback=False, trusted_networks=()) == "127.0.0.1"
+    assert client_address(("172.18.0.3", 5), None, "198.51.100.9", behind_loopback=False, trusted_networks=trusted) == "198.51.100.9"
+    assert client_address(("192.0.2.1", 5), None, "198.51.100.9", behind_loopback=False, trusted_networks=trusted) == "192.0.2.1"
+
+
+def test_ws_bind_validation_blocks_remote_plain_ws_without_opt_in():
+    with pytest.raises(ValueError, match="loopback"):
+        validate_plain_ws_bind("0.0.0.0", False, None)
+    validate_plain_ws_bind("0.0.0.0", True, None)

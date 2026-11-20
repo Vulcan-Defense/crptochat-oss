@@ -1,8 +1,9 @@
 # Compose de produção na VM (restrições duras; TLS e dados em /data).
-# Caddy no host faz TLS público e encaminha:
-#   - TCP/TLS :7777 → cliente de terminal (ou outro proxy)
-#   - wss → ws://127.0.0.1:7778 com cabeçalho Origin (cliente web)
-#   - estático de web/dist (ver packaging/DEPLOY.md)
+# Caddy (contêiner ou host) entra na rede `crptochat` e encaminha:
+#   - TCP/TLS :7777 → cliente de terminal
+#   - wss /ws → ws://crptochat:7778 (WebGate sem TLS na rede Docker)
+#   - estático de web/dist em /web/ (a raiz continua a página de downloads)
+# Ver packaging/DEPLOY.md
 services:
   server:
     build: .
@@ -21,8 +22,9 @@ services:
     volumes:
       - crptochat-data:/data
     ports:
-      - "127.0.0.1:7777:7777"
-      - "127.0.0.1:7778:7778"
+      - "7777:7777"
+    networks:
+      - crptochat
     entrypoint: ["python", "-u", "-m", "crptochat.server"]
     command:
       - --data
@@ -31,9 +33,20 @@ services:
       - 0.0.0.0
       - --ws-port
       - "7778"
+      - --ws-behind-proxy
+      - --ws-trusted-proxy
+      - 172.16.0.0/12
+      - --ws-trusted-proxy
+      - 10.0.0.0/8
+      - --ws-trusted-proxy
+      - 192.168.0.0/16
       - --ws-origin
       - https://crptochat.acpt.app.br
     restart: unless-stopped
+
+networks:
+  crptochat:
+    name: crptochat
 
 volumes:
   crptochat-data:

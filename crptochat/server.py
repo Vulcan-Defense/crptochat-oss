@@ -1984,18 +1984,37 @@ async def _amain(args) -> None:
         print(f"  TLS 1.3 ativo · fingerprint do certificado (SHA-256):\n  \033[38;5;51m{cert_fingerprint(cert)}\033[0m")
     else:
         print("  \033[38;5;214mTLS desativado\033[0m: o conteúdo continua E2EE, mas metadados trafegam em claro")
-    port = await server.start(args.host, args.port, ssl_ctx)
-    print(f"  escutando em {args.host}:{port} · dados em {os.path.abspath(args.data)}")
     gate = None
+    gate_exc = None
     if args.ws_port is not None:
-        from .webgate import WebGate
+        from .webgate import WebGate, WebSocketUnavailable, validate_plain_ws_bind
         if bool(args.ws_cert) != bool(args.ws_key):
             raise ValueError("--ws-cert e --ws-key vão juntos")
         ws_ctx = make_ssl_context(args.ws_cert, args.ws_key) if args.ws_cert else None
-        gate = WebGate(server, args.ws_origin or [], ws_ctx, behind_proxy=ws_ctx is None)
-        ws_port = await gate.start(args.ws_host, args.ws_port)
-        mode = "wss (TLS próprio)" if ws_ctx else "ws em loopback, atrás do proxy reverso"
-        print(f"  cliente web: {mode} em {args.ws_host}:{ws_port} · origens: {', '.join(gate.origins)}")
+        try:
+            validate_plain_ws_bind(args.ws_host, args.ws_behind_proxy, ws_ctx)
+            gate = WebGate(server, args.ws_origin or [], ws_ctx, plain_remote=args.ws_behind_proxy,
+                           trusted_proxies=args.ws_trusted_proxy or [])
+        except (ValueError, WebSocketUnavailable) as exc:
+            gate_exc = exc
+        except Exception as exc:  # pragma: no cover - defensive
+            gate_exc = exc
+    port = await server.start(args.host, args.port, ssl_ctx)
+    print(f"  escutando em {args.host}:{port} · dados em {os.path.abspath(args.data)}")
+    if args.ws_port is not None:
+        if gate_exc is not None:
+            print(f"  cliente web: desativado — {gate_exc}")
+        elif gate is not None:
+            try:
+                ws_port = await gate.start(args.ws_host, args.ws_port)
+            except Exception as exc:
+                print(f"  cliente web: não iniciou — {exc}")
+                gate = None
+            else:
+                mode = "wss (TLS próprio)" if gate.ssl_ctx else (
+                    "ws atrás do proxy (rede privada)" if gate.plain_remote
+                    else "ws em loopback, atrás do proxy reverso")
+                print(f"  cliente web: {mode} em {args.ws_host}:{ws_port} · origens: {', '.join(gate.origins)}")
     feed = None
     if not args.no_stats:
         from .stats import StatsFeed, socket_path
@@ -2066,6 +2085,10 @@ administração com o servidor no ar (mesmo --data):
                      help="origem permitida da página do cliente (ex.: https://app.exemplo.org); repita para várias")
     web.add_argument("--ws-cert", help="certificado (PEM, de CA pública) para o WebSocket falar TLS direto")
     web.add_argument("--ws-key", help="chave do --ws-cert")
+    web.add_argument("--ws-behind-proxy", action="store_true",
+                     help="permite WebSocket sem TLS em endereço não-loopback, em rede privada (com proxy de confiança)")
+    web.add_argument("--ws-trusted-proxy", action="append", default=[], metavar="ADDR/CIDR",
+                     help="proxy reverso de confiança para ler X-Forwarded-For / X-Real-IP (repita para vários)")
     args = ap.parse_args(argv)
     try:
         asyncio.run(_amain(args))

@@ -14,7 +14,15 @@ const mark = (name) => { marks[name] = Math.round(performance.now() - t0); };
 window.crptoMetrics = marks;
 
 const remember = (k, v) => { try { v === undefined ? (v = localStorage.getItem(k)) : localStorage.setItem(k, v); } catch { v = null; } return v; };
-$("url").value = remember("crpto.url") || (location.hostname === "localhost" ? "ws://localhost:7778" : "");
+
+function defaultWsUrl() {
+  const host = location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") return "ws://localhost:7778";
+  if (location.protocol === "https:") return `wss://${location.host}/ws`;
+  return "";
+}
+
+$("url").value = remember("crpto.url") || defaultWsUrl();
 $("nick").value = remember("crpto.nick") || "";
 
 async function syncfs(py, populate) {

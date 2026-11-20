@@ -14,6 +14,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg pass gnupg
       - run: pip install -e ".[dev]"
       - run: pytest -q
+      - run: python3 packaging/stamp_site.py
       - run: python -m crptochat.selftest
       # the version never goes back: against the base of a PR, and against the previous
       # commit of a push (catches e.g. a conflict resolved to the lower of two bumps)
@@ -50,3 +51,4 @@ jobs:
           test -n "$version"
           chmod +x packaging/server_smoke_restricted.sh
           packaging/server_smoke_restricted.sh crptochat-server:restricted "$version" 25
+          CRPTOCHAT_SMOKE_WS_BEHIND_PROXY=1 packaging/server_smoke_restricted.sh crptochat-server:restricted "$version" 25

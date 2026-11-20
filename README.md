@@ -293,6 +293,10 @@ ponta a ponta. Fica **desligada** sem `--ws-port` e precisa do pacote
 # atrás de um proxy reverso com TLS (Caddy, nginx) que encaminha wss:// para cá
 crptochat-server --ws-port 7778 --ws-origin https://app.exemplo.org
 
+# rede Docker privada (Caddy em outro contêiner): plain WS em 0.0.0.0 com confiança no proxy
+crptochat-server --ws-port 7778 --ws-host 0.0.0.0 --ws-behind-proxy \
+  --ws-trusted-proxy 172.16.0.0/12 --ws-origin https://app.exemplo.org
+
 # ou falando TLS direto, com certificado de CA pública (ex.: Let's Encrypt)
 crptochat-server --ws-host 0.0.0.0 --ws-port 7778 --ws-origin https://app.exemplo.org \
   --ws-cert /etc/letsencrypt/live/HOST/fullchain.pem --ws-key /etc/letsencrypt/live/HOST/privkey.pem
