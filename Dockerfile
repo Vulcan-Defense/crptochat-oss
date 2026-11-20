@@ -15,8 +15,13 @@ RUN apt-get update \
  && python -c "import cryptography, websockets" \
  && useradd -r -m crpto
 COPY crptochat /app/crptochat
+# O umask do checkout na VM (ex.: 077) pode deixar os .py em 0600 no contexto do
+# build; o COPY preserva o modo e o processo roda como crpto (não root) e deixa de
+# conseguir importar o pacote.
+RUN chmod -R a+rX /app/crptochat
 WORKDIR /app
 USER crpto
 VOLUME /data
 EXPOSE 7777
-ENTRYPOINT ["python", "-m", "crptochat.server", "--data", "/data"]
+ENTRYPOINT ["python", "-u", "-m", "crptochat.server"]
+CMD ["--data", "/data"]

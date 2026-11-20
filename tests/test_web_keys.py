@@ -21,16 +21,29 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def terminal_blob(nick, passphrase):
-    """What `pass show crptochat/NICK` prints after the terminal moved its key there."""
+def terminal_blob(nick, passphrase, *, on_disk=False):
+    """Terminal identity: compact JSON (vault) or the file on disk (indent=1)."""
     ident = Identity.create(nick, passphrase)
-    with open(Identity.path(nick)) as fh:
+    path = Identity.path(nick)
+    if on_disk:
+        with open(path, encoding="utf-8") as fh:
+            return ident, fh.read()
+    with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     return ident, json.dumps(data, separators=(",", ":"))
 
 
 def to_browser(monkeypatch, home):
     monkeypatch.setenv("CRPTOCHAT_HOME", str(home / "browser"))
+
+
+def test_terminal_identity_json_file_on_disk(home, monkeypatch):
+    """~/.config/crptochat/identities/<nick>.json from the terminal client."""
+    ident, text = terminal_blob("file_user", "senha-terminal-8", on_disk=True)
+    assert '"v": 1' in text and "\n" in text
+    to_browser(monkeypatch, home)
+    got = keys.import_key(text, "senha-terminal-8")
+    assert got["fingerprint"] == crypto.fingerprint(ident.ik)
 
 
 def test_a_terminal_key_moves_into_the_browser_and_back(home, monkeypatch):

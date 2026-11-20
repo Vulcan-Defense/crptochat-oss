@@ -1,0 +1,39 @@
+# Compose de produção na VM (restrições duras; TLS e dados em /data).
+# Caddy no host faz TLS público e encaminha:
+#   - TCP/TLS :7777 → cliente de terminal (ou outro proxy)
+#   - wss → ws://127.0.0.1:7778 com cabeçalho Origin (cliente web)
+#   - estático de web/dist (ver packaging/DEPLOY.md)
+services:
+  server:
+    build: .
+    image: crptochat-server
+    container_name: crptochat
+    user: crpto
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - crptochat-data:/data
+    ports:
+      - "127.0.0.1:7777:7777"
+      - "127.0.0.1:7778:7778"
+    entrypoint: ["python", "-u", "-m", "crptochat.server"]
+    command:
+      - --data
+      - /data
+      - --ws-host
+      - 0.0.0.0
+      - --ws-port
+      - "7778"
+      - --ws-origin
+      - https://crptochat.acpt.app.br
+    restart: unless-stopped
+
+volumes:
+  crptochat-data:
