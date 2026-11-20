@@ -16,9 +16,10 @@ It is off unless ``--ws-port`` is given, and then:
 * with ``--ws-cert``/``--ws-key`` it speaks TLS itself (browsers need a
   certificate from a public CA, not the self-signed one the terminal pins);
   without them it speaks plain WebSocket and may only listen on a loopback
-  address, behind a reverse proxy that does TLS; the client's address then
-  comes from the proxy's ``X-Forwarded-For`` (the last entry, which the proxy
-  wrote), so per-address limits and bans keep working;
+  address, behind a reverse proxy that does TLS, unless ``--ws-behind-proxy``
+  opts in to plain WebSocket on a non-loopback bind inside a private network;
+  with a trusted reverse proxy (``--ws-trusted-proxy``), the client's address
+  comes from ``X-Real-IP`` or the last entry of ``X-Forwarded-For``;
 * frames are limited to the protocol's MAX_LINE, compression is off, and
   binary messages or messages holding a line break close the connection.
 
@@ -74,21 +75,67 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def client_address(peer: tuple | None, forwarded: str | None, behind_proxy: bool) -> str:
+def parse_trusted_proxy(spec: str):
+    """A host address or CIDR accepted as a reverse proxy for X-Forwarded-For."""
+    spec = spec.strip()
+    if not spec:
+        raise ValueError("endereço vazio em --ws-trusted-proxy")
+    try:
+        if "/" in spec:
+            return ipaddress.ip_network(spec, strict=False)
+        addr = ipaddress.ip_address(spec)
+        return ipaddress.ip_network(f"{addr}/{addr.max_prefixlen}", strict=False)
+    except ValueError as exc:
+        raise ValueError(f"--ws-trusted-proxy inválido: {spec!r}") from exc
+
+
+def peer_trusted(peer: tuple | None, networks: tuple) -> bool:
+    if not peer or not networks:
+        return False
+    try:
+        addr = ipaddress.ip_address(peer[0])
+    except ValueError:
+        return False
+    return any(addr in net for net in networks)
+
+
+def client_address(peer: tuple | None, forwarded: str | None, real_ip: str | None,
+                   *, behind_loopback: bool, trusted_networks: tuple) -> str:
     """The address the limits and bans apply to.
 
-    Behind the proxy (plain WebSocket on loopback), the proxy appends the real
-    client to X-Forwarded-For: the last entry is the only one it vouches for.
-    Anything that is not a valid IP falls back to the peer, and a peer that is
-    not loopback is never trusted to say who the client is."""
+    Behind a loopback proxy, the proxy appends the real client to
+    X-Forwarded-For: the last entry is the only one it vouches for.
+    With ``--ws-behind-proxy``, the peer must fall in ``--ws-trusted-proxy``
+    before any forwarded header is believed."""
     ip = peer[0] if peer else "?"
-    if behind_proxy and forwarded and is_loopback(ip):
+    use_forwarded = False
+    if behind_loopback and is_loopback(ip):
+        use_forwarded = True
+    elif peer_trusted(peer, trusted_networks):
+        use_forwarded = True
+    if not use_forwarded:
+        return ip
+    if real_ip:
+        try:
+            return str(ipaddress.ip_address(real_ip.strip()))
+        except ValueError:
+            pass
+    if forwarded:
         last = forwarded.split(",")[-1].strip()
         try:
             return str(ipaddress.ip_address(last))
         except ValueError:
             pass
     return ip
+
+
+def validate_plain_ws_bind(host: str, plain_remote: bool, ssl_ctx: ssl.SSLContext | None) -> None:
+    if ssl_ctx is not None:
+        return
+    if not is_loopback(host) and not plain_remote:
+        raise ValueError("WebSocket sem TLS só escuta em loopback, atrás de um proxy reverso com TLS "
+                         "(use --ws-behind-proxy para escutar em rede privada com proxy de confiança, "
+                         "ou informe --ws-cert e --ws-key)")
 
 
 class _Reader:
@@ -144,27 +191,32 @@ class _Writer:
 
 
 class WebGate:
-    def __init__(self, server: "Server", origins: list[str], ssl_ctx: ssl.SSLContext | None, behind_proxy: bool):
+    def __init__(self, server: "Server", origins: list[str], ssl_ctx: ssl.SSLContext | None,
+                 *, plain_remote: bool, trusted_proxies: list[str]):
         if not origins:
             raise ValueError("--ws-port exige ao menos um --ws-origin (a origem da página do cliente web)")
         if len(origins) > MAX_ORIGINS:
             raise ValueError(f"no máximo {MAX_ORIGINS} --ws-origin")
+        if plain_remote and ssl_ctx is not None:
+            raise ValueError("--ws-behind-proxy não combina com --ws-cert/--ws-key")
         self.server = server
         self.origins = [check_origin(o) for o in origins]
         self.ssl_ctx = ssl_ctx
-        self.behind_proxy = behind_proxy
+        self.plain_remote = plain_remote
+        self.behind_loopback = ssl_ctx is None
+        self._trusted = tuple(parse_trusted_proxy(s) for s in trusted_proxies)
         self._ws_server = None
 
     async def start(self, host: str, port: int) -> int:
-        if self.ssl_ctx is None and not is_loopback(host):
-            raise ValueError("WebSocket sem TLS só escuta em loopback, atrás de um proxy reverso com TLS "
-                             "(ou informe --ws-cert e --ws-key)")
+        validate_plain_ws_bind(host, self.plain_remote, self.ssl_ctx)
         serve, closed_exc = _ws()
 
         async def handler(conn):
             req = conn.request
-            address = client_address(conn.remote_address, req.headers.get("X-Forwarded-For") if req else None,
-                                     self.behind_proxy)
+            headers = req.headers if req else {}
+            address = client_address(
+                conn.remote_address, headers.get("X-Forwarded-For"), headers.get("X-Real-IP"),
+                behind_loopback=self.behind_loopback, trusted_networks=self._trusted)
             await self.server._handle(_Reader(conn, closed_exc), _Writer(conn, address, closed_exc))
             await conn.close()
 
