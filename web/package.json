@@ -1,0 +1,12 @@
+{
+  "name": "crptochat-web-build",
+  "private": true,
+  "description": "Build/test only: ws lets precompile.mjs run Pyodide under Node; playwright drives e2e.mjs. Nothing here reaches the page.",
+  "type": "module",
+  "dependencies": {
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}
