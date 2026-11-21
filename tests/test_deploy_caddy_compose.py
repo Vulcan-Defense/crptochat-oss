@@ -4,7 +4,8 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-import yaml
+
+yaml = pytest.importorskip("yaml")   # PyYAML is a dev extra; the VM's python3 does not have it
 
 ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location("deploy_lib", ROOT / "packaging" / "deploy_lib.py")

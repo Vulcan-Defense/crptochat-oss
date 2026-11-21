@@ -44,8 +44,13 @@ services:
       - https://crptochat.acpt.app.br
     restart: unless-stopped
 
+# A rede é compartilhada com o Caddy (outro compose do mesmo projeto): ela é do
+# bootstrap (crptochat-bootstrap.sh), nunca deste compose. Como external, o
+# `compose up` do servidor não cria, recria nem remove a rede. Fora da VM:
+#   docker network create crptochat
 networks:
   crptochat:
+    external: true
     name: crptochat
 
 volumes:

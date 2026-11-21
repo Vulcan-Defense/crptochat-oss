@@ -114,10 +114,124 @@ def test_render_compose_external_volume(tmp_path):
     out = tmp_path / "compose.yml"
     deploy_lib.render_compose(tmpl, out, "crptochat-setup_crptochat-data")
     text = out.read_text(encoding="utf-8")
-    assert "external: true" in text
-    assert "crptochat-setup_crptochat-data" in text
+    assert "networks:\n  crptochat:\n    external: true\n    name: crptochat\n" in text
+    assert "volumes:\n  crptochat-data:\n    external: true\n    name: crptochat-setup_crptochat-data\n" in text
     assert "7777:7777" in text
     assert "127.0.0.1:7778" not in text
+    template = tmpl.read_text(encoding="utf-8")
+    assert text.split("\nnetworks:")[0] == template.split("\nnetworks:")[0]       # services untouched
+    assert deploy_lib.render_compose_text(text, "crptochat-setup_crptochat-data") == text   # idempotent
+
+
+# #31's template: the network managed by compose; the old regex render left it so
+OLD_TEMPLATE = """\
+services:
+  server:
+    image: crptochat-server
+    networks:
+      - crptochat
+    volumes:
+      - crptochat-data:/data
+
+networks:
+  crptochat:
+    name: crptochat
+    driver: bridge
+
+volumes:
+  crptochat-data:
+
+# a section after volumes (the old regex cut everything from volumes: to the end)
+x-notes:
+  keep: me
+"""
+
+
+def test_render_compose_by_structure_keeps_what_follows():
+    out = deploy_lib.render_compose_text(OLD_TEMPLATE, "vol_x")
+    assert "networks:\n  crptochat:\n    external: true\n    name: crptochat\n" in out
+    assert "driver: bridge" not in out                          # the managed definition is replaced, not merged
+    assert "volumes:\n  crptochat-data:\n    external: true\n    name: vol_x\n" in out
+    assert out.endswith("x-notes:\n  keep: me\n")                # nothing after volumes is lost
+    assert out.split("\nnetworks:")[0] == OLD_TEMPLATE.split("\nnetworks:")[0]
+    without = OLD_TEMPLATE.split("\nnetworks:")[0] + "\n"
+    added = deploy_lib.render_compose_text(without, "vol_x")
+    assert "\nnetworks:\n  crptochat:\n    external: true\n" in added and "\nvolumes:\n  crptochat-data:\n" in added
+    with pytest.raises(deploy_lib.DeployError):
+        deploy_lib.render_compose_text("volumes:\n  a:\n", "vol_x")
+    with pytest.raises(deploy_lib.DeployError):
+        deploy_lib.render_compose_text(OLD_TEMPLATE, "Vol X")
+
+
+def server_config(**over):
+    cfg = {
+        "networks": {"crptochat": {"name": "crptochat", "external": True}},
+        "volumes": {"crptochat-data": {"name": "v", "external": True}},
+        "services": {"server": {
+            "networks": {"crptochat": None},
+            "volumes": [{"type": "volume", "source": "crptochat-data", "target": "/data"}],
+            "ports": [{"mode": "ingress", "target": 7777, "published": "7777", "protocol": "tcp"}],
+            "command": ["--data", "/data", "--ws-port", "7778", "--ws-origin", "https://o.example"],
+        }},
+    }
+    for path, value in over.items():
+        node = cfg
+        keys = path.split("__")
+        for k in keys[:-1]:
+            node = node[k]
+        node[keys[-1]] = value
+    import json
+    return json.dumps(cfg)
+
+
+def test_server_compose_config_check():
+    got = deploy_lib.check_server_config_json(server_config(), "v")
+    assert got == {"ws_port": "7778", "ws_origin": "https://o.example"}
+    for over in ({"networks__crptochat": {"name": "crptochat-setup_crptochat"}},   # managed by compose: the bug
+                 {"networks__crptochat": {"name": "outra", "external": True}},
+                 {"volumes__crptochat-data": {"name": "crptochat-setup_crptochat-data"}},
+                 {"volumes__crptochat-data": {"name": "w", "external": True}},
+                 {"services__server__networks": {"default": None}},
+                 {"services__server__volumes": []},
+                 {"services__server__ports": [{"target": 7777, "published": "17777"}]},
+                 {"services__server__command": ["--data", "/data"]},
+                 {"services__server__command": ["--ws-port", "7779"]}):
+        with pytest.raises(deploy_lib.DeployError):
+            deploy_lib.check_server_config_json(server_config(**over), "v")
+
+
+@pytest.mark.parametrize("line, bad", [
+    (" Container crptochat  Recreate", False),
+    ("DRY-RUN MODE -  Container crptochat  Recreated", False),
+    (" Container crptochat  Starting", False),
+    ("WARN[0000] Found orphan containers ([crptochat-caddy]) for this project. If you removed or renamed this "
+     "service in your compose file, you can run this command with the --remove-orphans flag to clean it up.", False),
+    (" Network crptochat  Recreate", True),
+    (" Network crptochat  Removing", True),
+    (" Network crptochat-setup_default  Creating", True),
+    (' Volume "crptochat-setup_crptochat-data"  Creating', True),
+    (" Volume crptochat-data  Removed", True),
+    (" Container crptochat-caddy  Stopping", True),
+    (" Container crptochat-caddy  Recreate", True),
+])
+def test_dry_run_check(line, bad):
+    assert bool(deploy_lib.check_dry_run(line + "\n", "crptochat")) is bad
+
+
+def test_asset_names_are_a_closed_list(tmp_path):
+    files = {"crptochat-linux-amd64": b"a", "evil.sh": b"b"}
+    manifest = update.make_manifest("1.0.0", "abc1234", 1, {n: _sha(d) for n, d in files.items()})
+    (tmp_path / "RELEASE").write_bytes(manifest)
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+    with pytest.raises(deploy_lib.DeployError, match="conhecido"):
+        deploy_lib.verify_downloaded_assets(tmp_path / "RELEASE", tmp_path, ["evil.sh"])
+    deploy_lib.verify_downloaded_assets(tmp_path / "RELEASE", tmp_path, ["crptochat-linux-amd64"])
+    import sys
+    r = subprocess.run([sys.executable, str(ROOT / "packaging" / "deploy_lib.py"), "list-assets",  # nosec B603
+                        "--manifest", str(tmp_path / "RELEASE")], capture_output=True, text=True,
+                       env={"PYTHONPATH": str(ROOT)})
+    assert r.returncode == 1 and "evil.sh" in r.stderr and r.stdout == ""
 
 
 def test_caddy_ws_inside_site_block():
