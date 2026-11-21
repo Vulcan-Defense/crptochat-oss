@@ -139,6 +139,8 @@
 
   .box { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cyan); padding: 14px 18px; margin: 14px 0; }
   .warn { border-left-color: var(--orange); }
+  .box.warn { border-left-color: var(--orange); background: linear-gradient(rgba(255, 170, 51, .06), rgba(255, 170, 51, .06)), var(--panel); }
+  .box ul { margin: 8px 0; padding-left: 20px; }
   .warn strong { color: var(--orange); }
   .fp { color: var(--green); overflow-wrap: anywhere; word-break: break-all; }
   ol, ul { padding-left: 22px; } li { margin: 5px 0; }
@@ -215,6 +217,7 @@
       <li><a href="#baixar">baixar</a></li>
       <li><a href="#verificar">verificar</a></li>
       <li><a href="#conectar">conectar</a></li>
+      <li><a href="#web">web</a></li>
       <li><a href="#novidades">novidades</a></li>
       <li><a href="#laboratorio">o que o servidor vê</a></li>
       <li><a href="#comandos">comandos</a></li>
@@ -235,6 +238,7 @@
        está offline, voz e arquivos.</p>
     <div class="cta">
       <a class="btn" id="cta" href="#baixar">▼ baixar o cliente <small id="cta-os"></small></a>
+      <a class="btn ghost" href="/web/">▶ usar no navegador</a>
       <a class="btn ghost" href="#verificar">⛨ conferir a assinatura</a>
     </div>
   </div>
@@ -379,10 +383,54 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
      nova uma vez pelo passo 1.</div>
 </section>
 
+<section id="web" class="reveal">
+  <h2><span class="k">▶</span><span class="w">ou use no navegador</span></h2>
+  <p class="sub">Sem instalar nada, no computador ou no celular: o mesmo cliente, rodando dentro da página.</p>
+  <p><a class="btn ghost" href="/web/">▶ abrir o crptochat no navegador</a></p>
+  <ol class="steps">
+    <li>Abra <a href="/web/"><code>/web/</code></a> neste mesmo site. Na primeira visita a página baixa o cliente
+        (uns 15 MB); das próximas vezes ela abre do que ficou guardado no navegador.</li>
+    <li>Entre com o seu <b>nick</b> e a sua <b>senha</b>. Já tem conta no terminal? Importe a mesma identidade: o
+        arquivo <code>.json</code> da sua chave (o de <code>~/.config/crptochat/</code>, ou o que você guardou no
+        gerenciador de senhas). É a mesma chave e o mesmo nick, e seus contatos continuam vendo a mesma fingerprint.</li>
+    <li>Criou a chave no navegador? Faça o <b>backup</b> que a página pede: a chave fica só naquele navegador, e
+        limpar os dados do site (o Safari do iPhone pode fazer isso sozinho) apaga ela.</li>
+  </ol>
+  <div class="box">
+    <p><b>O que continua igual:</b> a chave é decifrada só no seu navegador e a senha nunca vai ao servidor. As
+       mensagens saem cifradas de ponta a ponta, como no terminal. A página fala com o servidor por WebSocket em
+       <code>/ws</code> (a entrada WebGate do servidor), e o servidor continua só repassando blobs cifrados.</p>
+  </div>
+  <div class="box warn">
+    <p><strong>O que muda: em quem você confia.</strong> No terminal você confere a assinatura do binário uma vez, e
+       o <code>--pin</code> recusa qualquer servidor que não seja este. No navegador não há como fazer nenhum dos dois:</p>
+    <ul>
+      <li>O código do cliente vem <b>deste site</b>, por HTTPS, a cada versão. Quem controlar o site (ou o
+          servidor que o entrega) poderia entregar uma página alterada, que leria a sua senha. Não há assinatura que
+          o navegador confira antes de rodar.</li>
+      <li>A conexão <code>wss://</code> é validada só pelas autoridades certificadoras do navegador, sem
+          <code>--pin</code>. Quem obtivesse um certificado válido para o domínio poderia ver os metadados da
+          conexão; o conteúdo continua cifrado de ponta a ponta.</li>
+      <li>Ainda é <b>beta</b>: sem a camada pós-quântica (fica só o X25519), sem mensagens de voz e sem
+          transferência direta de arquivos.</li>
+    </ul>
+    <p>Para conversas em que isso pesa, use o <a href="#baixar">cliente de terminal</a> com a assinatura conferida e o
+       <code>--pin</code>.</p>
+  </div>
+</section>
+
 <section id="novidades" class="reveal">
-  <h2><span class="k">★</span><span class="w">novidades até a 1.18</span></h2>
+  <h2><span class="k">★</span><span class="w">novidades até a 1.21</span></h2>
   <p class="sub">Tudo negociado com quem está do outro lado: clientes antigos continuam conversando normalmente.</p>
   <div class="feat">
+    <article class="card"><span class="v">1.20</span>
+      <h3>Cliente no navegador</h3>
+      <p>O mesmo cliente, sem instalar: abra <a href="/web/"><code>/web/</code></a> e entre com a sua chave. Na 1.21 a
+         interface passou a caber em tela de celular.</p>
+      <details><summary>como funciona</summary>
+        <p>O Python do cliente roda em WebAssembly na página e fala com o servidor por WebSocket
+           (<span class="k2">/ws</span>, a entrada WebGate). A chave fica cifrada no navegador. A confiança é no site
+           servido por HTTPS, não num binário assinado com <code>--pin</code>: veja <a href="#web">ou use no navegador</a>.</p></details></article>
     <article class="card"><span class="v">1.12</span>
       <h3>Double Ratchet nas diretas</h3>
       <p>Chave X25519 nova a cada troca de vez. Quem copiar o estado do seu cliente perde o acesso assim que vocês se respondem.</p>
