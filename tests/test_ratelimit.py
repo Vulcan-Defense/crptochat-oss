@@ -12,6 +12,7 @@ from crptochat import crypto
 from crptochat.client import ChatError
 from crptochat.protocol import b64d, b64e, decode, encode
 from crptochat.ratelimit import DEFAULTS, Bucket, Limits, Strikes
+from crptochat.server import Refuse, Server
 from crptochat.store import Identity
 
 
@@ -203,6 +204,32 @@ def test_anonymous_sessions_and_new_nicks_per_ip(home):
             again = await h.client("xis", identity=x.identity)            # existing nicks still log in
             assert again.online
     run(main())
+
+
+def test_registration_limit_survives_a_server_restart(home):
+    """Restarting must not turn a per-IP account limit into an account factory."""
+    data = home / "persistent-registration-limit"
+    first = Server(str(data), reg_limit=2)
+    first._record_registration("203.0.113.9", 1_000)
+    first._record_registration("203.0.113.9", 1_001)
+    first.db.commit()
+    first.db.close()
+
+    second = Server(str(data), reg_limit=2)
+    with pytest.raises(Refuse) as err:
+        second._check_registration_limit("203.0.113.9", 1_002)
+    assert err.value.code == "reg_limit"
+    # The stored value is a keyed hash, never the address itself.
+    row = second.db.execute("SELECT ip_hash FROM registrations").fetchone()[0]
+    assert row == second._ip_hash("203.0.113.9") and "203.0.113.9" not in row
+    second.db.close()
+
+
+def test_disabled_registration_limit_keeps_no_rate_limit_records(home):
+    server = Server(str(home / "registration-limit-off"), reg_limit=0)
+    server._record_registration("203.0.113.9", 1_000)
+    assert server.db.execute("SELECT COUNT(*) FROM registrations").fetchone()[0] == 0
+    server.db.close()
 
 
 def test_max_message_size(home):
@@ -495,4 +522,38 @@ def test_address_memory_adds_up_every_session(home):
             c = await guest(h)
             assert len(h.server.sessions[c.key].strikes.times) == 5
             assert h.server.sessions[c.key].strikes.hit() == "kick"   # the 6th, counted across sessions
+    run(main())
+
+
+def test_over_quota_bad_signature_is_bad_auth_and_says_nothing_else(home):
+    """The quota is checked after the signatures: whoever cannot sign gets
+    bad_auth, not reg_limit (which would tell that the nick is free). A valid
+    signature for a new nick then gets reg_limit; an existing nick still logs in."""
+    async def attempt(port, nick, key, good=True):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        try:
+            nonce = b64d(decode(await reader.readline())["nonce"])
+            dh = crypto.x_pub(crypto.x_generate())
+            sig = crypto.sign(key, crypto.auth_message(nonce, nick, dh))
+            if not good:
+                sig = bytes([sig[0] ^ 1]) + sig[1:]
+            writer.write(encode({"t": "auth", "id": 0, "nick": nick, "ik": b64e(crypto.ed_pub(key)), "dh": b64e(dh),
+                                 "sig": b64e(sig), "dh_sig": b64e(crypto.sign(key, crypto.dh_message(nick, dh)))}))
+            reply = decode(await reader.readline())
+            return reply.get("code") if reply.get("t") == "err" else "ok"
+        finally:
+            writer.close()
+
+    async def main():
+        server = Server(str(home / "quota-order"), reg_limit=1)
+        port = await server.start("127.0.0.1", 0)
+        try:
+            first = crypto.ed_generate()
+            assert await attempt(port, "primeiro", first) == "ok"                   # uses the only slot
+            assert await attempt(port, "segundo", crypto.ed_generate(), good=False) == "bad_auth"
+            assert await attempt(port, "segundo", crypto.ed_generate()) == "reg_limit"
+            assert await attempt(port, "primeiro", first, good=False) == "bad_auth"
+            assert await attempt(port, "primeiro", first) == "ok"                   # existing nick: not limited
+        finally:
+            await server.stop()
     run(main())
