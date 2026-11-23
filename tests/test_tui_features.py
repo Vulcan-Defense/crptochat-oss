@@ -296,3 +296,54 @@ def test_a_direct_conversation_with_someone_unchecked_starts_with_a_warning(home
             assert not any("ainda não foi conferido" in ln for ln in lines(app, "@carol"))
         await world.stop()
     asyncio.run(main())
+
+
+def test_the_message_box_grows_with_long_text_and_sends_it_whole(home):
+    """A long message wraps inside the box, which grows (up to 5 lines, then it
+    scrolls) instead of sliding sideways; Enter sends all of it."""
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await type_line(pilot, "/join #lobby")
+            await until(pilot, lambda: app.current == "#lobby")
+            box, bar = app.input, app.query_one("#inputbar")
+            assert box.size.height == 1 and bar.outer_size.height == 3          # empty: one line, as before
+
+            long = ("a sozinho. Quem está na 1.16 ou anterior instala de novo pelo site. "
+                    "Novidade: agora tem cliente web no navegador, sem instalar nada. ") * 2
+            box.value = long
+            await pilot.pause(0.1)
+            assert 2 <= box.size.height <= 5 and bar.outer_size.height == box.size.height + 2   # grew, wrapped
+            assert box.wrapped_document.height == box.size.height
+
+            box.value = long * 6                                                  # huge: capped at 5, scrolls
+            await pilot.pause(0.1)
+            assert box.size.height == 5
+
+            box.value = long
+            await pilot.pause(0.05)
+            await pilot.press("enter")
+            await until(pilot, lambda: any(long.strip()[:40] in ln for ln in lines(app, "#lobby")))
+            assert box.value == "" and box.size.height == 1                       # back to one line
+            sent = "".join(ln for ln in lines(app, "#lobby") if "a sozinho" in ln or "navegador" in ln)
+            assert "sem instalar nada" in sent
+
+            box.value = ""
+            box.insert("linha um\nlinha dois\r\nlinha três")                     # a paste with line breaks
+            await pilot.pause(0.05)
+            assert box.value == "linha um linha dois linha três"
+
+            # up/down move inside a wrapped message; the history only from its first/last row
+            box.value = long
+            await pilot.pause(0.05)
+            rows = box.wrapped_document.height
+            assert rows > 1
+            await pilot.press("up")
+            assert box.value == long                                             # moved up a row, no history
+            for _ in range(rows):
+                await pilot.press("up")
+            assert box.value != long                                             # top row: previous message
+        await world.stop()
+    asyncio.run(main())
