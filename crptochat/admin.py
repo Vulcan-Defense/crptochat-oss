@@ -54,6 +54,8 @@ class AdminSocket:
         self._listener: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
+        if not hasattr(asyncio, "start_unix_server"):
+            return
         try:
             os.unlink(self.path)
         except FileNotFoundError:
