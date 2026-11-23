@@ -324,7 +324,9 @@ class ChatClient:
                 pinned = self.pin or self.store.server_pin()
                 if pinned is None:
                     self.store.pin_server(fp)
-                    self.sys(f"certificado do servidor fixado (TOFU): {fp}", "warn")
+                    self.sys(f"certificado do servidor fixado na primeira conexão (TOFU, sem --pin): {fp}. "
+                             "Confira com o --pin publicado pelo servidor; se não bater, alguém pode estar no meio.",
+                             "warn")
                 elif pinned.lower().replace(":", "") != fp:
                     raise FatalError(
                         "o certificado TLS do servidor MUDOU (possível interceptação). "
@@ -588,6 +590,7 @@ class ChatClient:
         return peer
 
     MAX_ROOTS = 32
+    MAX_V1_SEEN = 4096      # v1 envelopes remembered per pair of sessions (replay check)
 
     def _pair_key(self, peer: Peer) -> bytes:
         if peer._pair is None or peer._pair[0] != peer.dh:
@@ -902,8 +905,18 @@ class ChatClient:
                 # Once they spoke v2 in these sessions, v1 from them is refused:
                 # v1 has no replay protection, so it could only be a replay.
                 raise CryptoError("envelope v1 depois de v2: recusado")
+            # v1 has no counter: a relay could hand the same envelope over again.
+            # Its nonce is random, so an identical envelope in the same pair of
+            # sessions can only be a replay (a new session means a new root).
+            seen = peer._cur.setdefault("v1_seen", {})
+            digest = hashlib.sha256(body).digest()
+            if digest in seen:
+                raise CryptoError("envelope v1 repetido: recusado")
             aad = b"crptochat-direct-v1|" + peer.key.encode() + b"|" + self.key.encode()
             plain = crypto.unpad(crypto.unseal(root, body, aad))
+            seen[digest] = None
+            while len(seen) > self.MAX_V1_SEEN:
+                del seen[next(iter(seen))]
         try:
             inner = json.loads(plain)
             inner["k"]

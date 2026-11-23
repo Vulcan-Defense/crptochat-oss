@@ -272,3 +272,27 @@ def test_anonymous_session_in_the_interface(home):
         assert not os.listdir(os.path.join(str(home / "cfg"), "identities"))
         await world.stop()
     asyncio.run(main())
+
+
+def test_a_direct_conversation_with_someone_unchecked_starts_with_a_warning(home):
+    """First contact is trust on first use: the key came from the server. The
+    conversation says so until the safety numbers are compared (/verify)."""
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await world.peer("bob")
+            carol = await world.peer("carol")
+            await type_line(pilot, "/msg bob oi")
+            await until(pilot, lambda: "@bob" in app.buffers and any("oi" in ln for ln in lines(app, "@bob")))
+            warning = [ln for ln in lines(app, "@bob") if "ainda não foi conferido" in ln]
+            assert len(warning) == 1 and "/verify bob" in warning[0]
+            assert lines(app, "@bob").index(warning[0]) == 0             # the first thing in the conversation
+
+            app.client.store.accept_key("carol", carol.identity.ik, verified=True)   # already checked: no warning
+            await type_line(pilot, "/msg carol oi")
+            await until(pilot, lambda: "@carol" in app.buffers and any("oi" in ln for ln in lines(app, "@carol")))
+            assert not any("ainda não foi conferido" in ln for ln in lines(app, "@carol"))
+        await world.stop()
+    asyncio.run(main())
