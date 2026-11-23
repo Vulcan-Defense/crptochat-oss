@@ -347,3 +347,25 @@ def test_the_message_box_grows_with_long_text_and_sends_it_whole(home):
             assert box.value != long                                             # top row: previous message
         await world.stop()
     asyncio.run(main())
+
+
+def test_a_burst_of_keys_ending_in_enter_sends_the_whole_line(home):
+    """A terminal (or the browser, or a fast typist) delivers "texto\\r" in one
+    read: every key is queued before the first is handled. Enter must still come
+    after the letters, or the line goes out empty (what the binary smoke caught)."""
+    from textual import events
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await type_line(pilot, "/join #lobby")
+            await until(pilot, lambda: app.current == "#lobby")
+            for ch in "rajada":
+                app.post_message(events.Key(ch, ch))
+            app.post_message(events.Key("enter", "\r"))
+            await until(pilot, lambda: any("rajada" in ln for ln in lines(app, "#lobby")))
+            assert app.input.value == ""
+        await world.stop()
+    asyncio.run(main())

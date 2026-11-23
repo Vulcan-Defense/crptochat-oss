@@ -304,12 +304,20 @@ class ChatInput(TextArea):
             self.input = chat_input
             self.value = value
 
-    BINDINGS = [
-        Binding("enter", "submit", show=False, priority=True),
-        Binding("tab", "complete", show=False, priority=True),
-        Binding("up", "history_or_move(-1)", show=False, priority=True),
-        Binding("down", "history_or_move(1)", show=False, priority=True),
-    ]
+    # Handled here, in key order, not as priority bindings: a terminal delivers
+    # "texto\r" in one burst, and a priority binding would run Enter before the
+    # letters queued ahead of it reach the box (it would send an empty line).
+    _KEYS = {"enter": ("action_submit",), "tab": ("action_complete",),
+             "up": ("action_history_or_move", -1), "down": ("action_history_or_move", 1)}
+
+    async def _on_key(self, event) -> None:
+        handler = self._KEYS.get(event.key)
+        if handler is None:
+            await super()._on_key(event)
+            return
+        event.stop()
+        event.prevent_default()
+        getattr(self, handler[0])(*handler[1:])
 
     def __init__(self, placeholder: str = "", **kw):
         super().__init__(soft_wrap=True, show_line_numbers=False, highlight_cursor_line=False,
