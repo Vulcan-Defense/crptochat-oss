@@ -369,3 +369,28 @@ def test_a_burst_of_keys_ending_in_enter_sends_the_whole_line(home):
             assert app.input.value == ""
         await world.stop()
     asyncio.run(main())
+
+
+def test_in_the_browser_there_is_no_update_check(home, monkeypatch):
+    """The site serves each new version of the browser client: no check on connect,
+    and /update explains instead of reaching for the network (Pyodide has no
+    direct socket for it anyway)."""
+    from crptochat import update
+
+    def no_network(*a, **kw):
+        raise AssertionError("o navegador não deve consultar atualizações")
+    monkeypatch.setattr(tui, "IN_BROWSER", True)
+    monkeypatch.setattr(update, "latest", no_network)
+    monkeypatch.setattr(update, "apply", no_network)
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await pilot.pause(0.2)
+            app.periodic_update_check()
+            await type_line(pilot, "/update")
+            await until(pilot, lambda: any("quem atualiza é o site" in ln for ln in lines(app)))
+        await world.stop()
+    asyncio.run(main())

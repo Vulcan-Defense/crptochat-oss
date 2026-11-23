@@ -7,6 +7,7 @@ import getpass
 import hashlib
 import re
 import shlex
+import sys
 import os
 import time
 import unicodedata
@@ -186,6 +187,9 @@ HELP = [
     ("/quit", "sai"),
 ]
 UPDATE_EVERY = 6 * 3600     # seconds between automatic update checks while the client runs
+# In the browser (Pyodide) the site serves each new version: there is no binary to
+# replace and no direct socket for the updater, so there is nothing to check.
+IN_BROWSER = sys.platform == "emscripten"
 
 GENERATE = ("gerar", "gera", "random", "aleatoria", "aleatória")
 REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "😂", "<3": "❤️", "coracao": "❤️",
@@ -1329,7 +1333,7 @@ class ChatApp(App):
             self.note(f"conectado a {self.client.server_name} como {self.client.nick}", "ok", CONSOLE)
             if self._first_online:
                 self._first_online = False
-                if load_prefs().get("update_check", True):
+                if load_prefs().get("update_check", True) and not IN_BROWSER:
                     self.run_cmd(self.check_update(announce_only=True), quiet=True)
                 for chan in self.autojoin:
                     self.run_cmd(self.do_join(chan))
@@ -2702,10 +2706,14 @@ class ChatApp(App):
                   "Saia (Ctrl+Q) e abra de novo para usar a versão nova.", "ok")
 
     def periodic_update_check(self) -> None:
-        if self.state == "online" and load_prefs().get("update_check", True):
+        if self.state == "online" and load_prefs().get("update_check", True) and not IN_BROWSER:
             self.run_cmd(self.check_update(announce_only=True), quiet=True)
 
     async def cmd_update(self, rest: str):
+        if IN_BROWSER:
+            self.note("no navegador quem atualiza é o site: cada versão nova chega ao recarregar a página "
+                      "(e a página avisa quando há uma).", "info")
+            return
         parts = rest.split()
         if parts[:1] in (["repo"], ["origem"]):
             if len(parts) == 2 and parts[1] in ("padrao", "padrão", "default"):
