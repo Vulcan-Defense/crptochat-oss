@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS ip_bans (
     label   TEXT,
     created INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS registrations (
+    ip_hash TEXT NOT NULL,
+    created INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS registrations_recent ON registrations (ip_hash, created);
 CREATE TABLE IF NOT EXISTS history (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     chan    TEXT NOT NULL,
@@ -319,7 +324,6 @@ class Server:
         self.db.commit()
         self.sessions: dict[str, Session] = {}
         self.members: dict[str, dict[str, Session]] = {}
-        self.reg_log: dict[str, list[float]] = {}
         # Mailbox quotas per sender. The database never says who left a message:
         # only RAM holds an HMAC of the sender, under a key made at startup.
         self._mail_salt = os.urandom(32)
@@ -679,6 +683,37 @@ class Server:
         # Addresses are never stored in clear, only as a keyed hash.
         return hmac.new(self._ip_salt, ip.encode(), hashlib.sha256).hexdigest()
 
+    def _check_registration_limit(self, ip: str, now: int | None = None) -> None:
+        """Refuse account-creation loops, including after a server restart.
+
+        The database holds only a keyed IP hash and short-lived timestamps;
+        the clear address never reaches disk.  This check runs before the two
+        Ed25519 verifications required for a new account, so a client already
+        over quota cannot spend CPU by repeatedly creating fresh keys.
+        """
+        limit = self.limits["reg_per_hour"]
+        if not limit:
+            return
+        now = int(time.time()) if now is None else now
+        recent = self.db.execute("SELECT COUNT(*) FROM registrations WHERE ip_hash=? AND created>?",
+                                 (self._ip_hash(ip), now - 3600)).fetchone()[0]
+        if recent >= limit:
+            raise Refuse("reg_limit", "muitos registros a partir deste endereço, tente mais tarde")
+
+    def _record_registration(self, ip: str, now: int | None = None) -> None:
+        # A zero limit explicitly disables this feature; do not turn that
+        # operator choice into an unbounded audit table.
+        if not self.limits["reg_per_hour"]:
+            return
+        self.db.execute("INSERT INTO registrations (ip_hash, created) VALUES (?,?)",
+                        (self._ip_hash(ip), int(time.time()) if now is None else now))
+
+    def purge_registrations(self) -> int:
+        """Discard the short-lived registration rate-limit records."""
+        cur = self.db.execute("DELETE FROM registrations WHERE created<=?", (int(time.time()) - 3600,))
+        self.db.commit()
+        return cur.rowcount
+
     def _ip_ban(self, ip: str) -> tuple[str, int] | None:
         """(reason, until) of an active ban on this address; until 0 = forever."""
         row = self.db.execute("SELECT until, reason FROM ip_bans WHERE ip_hash=?", (self._ip_hash(ip),)).fetchone()
@@ -775,11 +810,6 @@ class Server:
             dh_sig = b64d(msg.get("dh_sig"), 64)
         except ProtocolError:
             raise Refuse("bad_auth", "autenticação malformada")
-        if not crypto.verify(ik, sig, crypto.auth_message(sess.nonce, nick, dh)):
-            raise Refuse("bad_auth", "assinatura inválida")
-        if not crypto.verify(ik, dh_sig, crypto.dh_message(nick, dh)):
-            raise Refuse("bad_auth", "assinatura inválida")
-
         key = nick.lower()
         guest = bool(msg.get("guest"))
         version = msg.get("ver")
@@ -787,6 +817,22 @@ class Server:
         sess.client_version = version if isinstance(version, str) and VERSION_RE.fullmatch(version) else ""
         registered = False
         role = "user"
+        row = None
+        if not guest:
+            if is_guest_nick(nick):
+                raise Refuse("bad_nick", f"nicks começando com '{GUEST_PREFIX}' são reservados para acesso anônimo")
+            row = self.db.execute("SELECT nick, ik, role, banned_until, ban_reason FROM users WHERE nick_lower=?",
+                                  (key,)).fetchone()
+            # Refuse an already exhausted registration window before expensive
+            # signature verification. Existing accounts remain able to log in.
+            if row is None:
+                self._check_registration_limit(sess.ip)
+
+        if not crypto.verify(ik, sig, crypto.auth_message(sess.nonce, nick, dh)):
+            raise Refuse("bad_auth", "assinatura inválida")
+        if not crypto.verify(ik, dh_sig, crypto.dh_message(nick, dh)):
+            raise Refuse("bad_auth", "assinatura inválida")
+
         if guest:
             # Anonymous access: nothing is registered. The nickname is derived
             # from the throwaway key, so it cannot collide with or imitate anyone.
@@ -798,10 +844,6 @@ class Server:
             if same_ip >= self.limits["anon_per_ip"]:
                 raise Refuse("limit", "muitas sessões anônimas a partir deste endereço")
         else:
-            if is_guest_nick(nick):
-                raise Refuse("bad_nick", f"nicks começando com '{GUEST_PREFIX}' são reservados para acesso anônimo")
-            row = self.db.execute("SELECT nick, ik, role, banned_until, ban_reason FROM users WHERE nick_lower=?",
-                                  (key,)).fetchone()
             if row:
                 if not hmac.compare_digest(bytes(row[1]), ik):
                     raise Refuse("nick_taken", "este nickname já está registrado com outra chave")
@@ -815,14 +857,10 @@ class Server:
                 if self.reg_token is not None and not hmac.compare_digest(
                         str(msg.get("reg_token") or "").encode(), self.reg_token.encode()):
                     raise Refuse("reg_token", "este servidor exige um token de registro válido")
-                now = time.time()
-                recent = [ts for ts in self.reg_log.get(sess.ip, []) if now - ts < 3600]
-                if self.limits["reg_per_hour"] and len(recent) >= self.limits["reg_per_hour"]:
-                    raise Refuse("reg_limit", "muitos registros a partir deste endereço, tente mais tarde")
-                recent.append(now)
-                self.reg_log[sess.ip] = recent
+                now = int(time.time())
+                self._record_registration(sess.ip, now)
                 self.db.execute("INSERT INTO users (nick_lower, nick, ik, created) VALUES (?,?,?,?)",
-                                (key, nick, ik, int(now)))
+                                (key, nick, ik, now))
                 self.db.commit()
                 registered = True
 
@@ -1278,6 +1316,7 @@ class Server:
                 self.purge_history()
                 self.purge_mail()
                 self.purge_announcements()
+                self.purge_registrations()
             except sqlite3.Error:
                 pass
 

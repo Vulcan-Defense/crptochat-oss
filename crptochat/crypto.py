@@ -44,13 +44,17 @@ def _load_mlkem():
     Importing is not enough: the module exists even where the OpenSSL underneath
     has no ML-KEM (e.g. the build in Pyodide), and then only using it fails."""
     try:
-        from cryptography.exceptions import UnsupportedAlgorithm
+        from cryptography.exceptions import InternalError, UnsupportedAlgorithm
         from cryptography.hazmat.primitives.asymmetric import mlkem
     except ImportError:      # pragma: no cover
         return None
     try:
         mlkem.MLKEM768PrivateKey.generate()
-    except UnsupportedAlgorithm:      # pragma: no cover
+    except (UnsupportedAlgorithm, InternalError):  # pragma: no cover - backend/provider dependent
+        # Some OpenSSL providers expose the module but cannot instantiate
+        # ML-KEM (for example when their entropy source is unavailable).  This
+        # optional layer must then be disabled rather than making every client
+        # and administrative command fail at import time.
         return None
     return mlkem
 
@@ -62,6 +66,13 @@ SCRYPT_N = 2 ** 15
 PAD_BLOCK = 64
 ZERO_NONCE = b"\x00" * 12
 MAX_CHAIN_SKIP = 2000
+# Envelope counters are encoded as unsigned 32-bit integers.  A message key
+# must never be paired with a wrapped counter (which would also repeat the
+# fixed AEAD nonce used with that one-time key), so exhaustion is terminal for
+# that chain.  In practice this is far beyond a normal session, but keeping
+# the bound here turns a future overflow into a controlled CryptoError instead
+# of an implementation-dependent struct/OverflowError.
+MAX_MESSAGE_INDEX = 2 ** 32 - 1
 
 
 class CryptoError(Exception):
@@ -331,6 +342,8 @@ class Chain:
         self.n = n
 
     def step(self) -> tuple[int, bytes]:
+        if self.n > MAX_MESSAGE_INDEX:
+            raise CryptoError("message counter exhausted")
         mk = hmac.new(self.ck, b"\x01", hashlib.sha256).digest()
         n = self.n
         self.ck = hmac.new(self.ck, b"\x02", hashlib.sha256).digest()
@@ -547,6 +560,8 @@ class DoubleRatchet:
         return hmac.new(ck, b"\x02", hashlib.sha256).digest(), hmac.new(ck, b"\x01", hashlib.sha256).digest()
 
     def encrypt(self, plaintext: bytes, aad_prefix: bytes) -> bytes:
+        if self.ns > MAX_MESSAGE_INDEX or self.pn > MAX_MESSAGE_INDEX:
+            raise CryptoError("message counter exhausted")
         header = x_pub(self.dhs) + struct.pack(">II", self.pn, self.ns)
         kind = DM_V3
         if self.send_ct is not None:

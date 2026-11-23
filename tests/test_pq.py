@@ -200,3 +200,15 @@ def test_a_first_offline_message_without_ml_kem_says_so(home):
             assert any("sem a camada pós-quântica" in t for t in notes)
             assert not alice.store.uses_pq("bob")
     run(main())
+
+
+def test_mlkem_is_disabled_when_the_provider_cannot_get_entropy(monkeypatch):
+    """A provider failure during the optional capability probe is not fatal."""
+    from cryptography.exceptions import InternalError
+    from cryptography.hazmat.primitives.asymmetric import mlkem
+
+    def unavailable():
+        raise InternalError("entropy unavailable", [])
+
+    monkeypatch.setattr(mlkem.MLKEM768PrivateKey, "generate", staticmethod(unavailable))
+    assert crypto._load_mlkem() is None

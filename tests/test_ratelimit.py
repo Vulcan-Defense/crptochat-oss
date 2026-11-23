@@ -12,6 +12,7 @@ from crptochat import crypto
 from crptochat.client import ChatError
 from crptochat.protocol import b64d, b64e, decode, encode
 from crptochat.ratelimit import DEFAULTS, Bucket, Limits, Strikes
+from crptochat.server import Refuse, Server
 from crptochat.store import Identity
 
 
@@ -203,6 +204,32 @@ def test_anonymous_sessions_and_new_nicks_per_ip(home):
             again = await h.client("xis", identity=x.identity)            # existing nicks still log in
             assert again.online
     run(main())
+
+
+def test_registration_limit_survives_a_server_restart(home):
+    """Restarting must not turn a per-IP account limit into an account factory."""
+    data = home / "persistent-registration-limit"
+    first = Server(str(data), reg_limit=2)
+    first._record_registration("203.0.113.9", 1_000)
+    first._record_registration("203.0.113.9", 1_001)
+    first.db.commit()
+    first.db.close()
+
+    second = Server(str(data), reg_limit=2)
+    with pytest.raises(Refuse) as err:
+        second._check_registration_limit("203.0.113.9", 1_002)
+    assert err.value.code == "reg_limit"
+    # The stored value is a keyed hash, never the address itself.
+    row = second.db.execute("SELECT ip_hash FROM registrations").fetchone()[0]
+    assert row == second._ip_hash("203.0.113.9") and "203.0.113.9" not in row
+    second.db.close()
+
+
+def test_disabled_registration_limit_keeps_no_rate_limit_records(home):
+    server = Server(str(home / "registration-limit-off"), reg_limit=0)
+    server._record_registration("203.0.113.9", 1_000)
+    assert server.db.execute("SELECT COUNT(*) FROM registrations").fetchone()[0] == 0
+    server.db.close()
 
 
 def test_max_message_size(home):
