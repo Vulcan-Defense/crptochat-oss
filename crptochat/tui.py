@@ -17,7 +17,8 @@ from textual.app import App, ComposeResult, SuspendNotSupported
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, RichLog, Static
+from textual.message import Message
+from textual.widgets import Input, OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
 from . import __version__, crypto
@@ -291,29 +292,86 @@ class Buffer:
 
 # ------------------------------------------------------------------ widgets
 
-class ChatInput(Input):
+class ChatInput(TextArea):
+    """Message box: long text wraps and the box grows (up to a few lines, then it
+    scrolls) instead of sliding sideways. Enter sends; a message is one line, so
+    pasted line breaks become spaces. Up/down walk the history only from the first
+    or last visual row; inside a wrapped message they move the cursor."""
+
+    class Submitted(Message):
+        def __init__(self, chat_input: "ChatInput", value: str):
+            super().__init__()
+            self.input = chat_input
+            self.value = value
+
     BINDINGS = [
-        Binding("tab", "complete", show=False),
-        Binding("up", "history(-1)", show=False),
-        Binding("down", "history(1)", show=False),
+        Binding("enter", "submit", show=False, priority=True),
+        Binding("tab", "complete", show=False, priority=True),
+        Binding("up", "history_or_move(-1)", show=False, priority=True),
+        Binding("down", "history_or_move(1)", show=False, priority=True),
     ]
 
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.history: list[str] = []
+    def __init__(self, placeholder: str = "", **kw):
+        super().__init__(soft_wrap=True, show_line_numbers=False, highlight_cursor_line=False,
+                         tab_behavior="focus", compact=True, placeholder=placeholder, **kw)
+        self.sent: list[str] = []
         self._hpos = 0
         self._cycle: tuple[str, list[str], int] | None = None
 
+    # the same small API the app (and the tests) used with Input
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, text: str) -> None:
+        self.text = " ".join(text.splitlines())
+        self.move_cursor(self.document.end)
+
+    @property
+    def cursor_position(self) -> int:
+        return self.cursor_location[1]
+
+    @cursor_position.setter
+    def cursor_position(self, column: int) -> None:
+        self.move_cursor((0, max(0, min(column, len(self.text)))))
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        text = self.text
+        if "\n" in text or "\r" in text:            # pasted text with line breaks: one line
+            row, col = self.cursor_location
+            offset = sum(len(line) + 1 for line in text.split("\n")[:row]) + col
+            flat = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
+            self.text = flat
+            self.move_cursor((0, min(len(flat), offset)))
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self, self.text))
+
+    def _visual_row(self) -> tuple[int, int]:
+        wrapped = self.wrapped_document
+        return wrapped.location_to_offset(self.cursor_location).y, max(1, wrapped.height)
+
+    def action_history_or_move(self, step: int) -> None:
+        row, rows = self._visual_row()
+        if (step < 0 and row > 0) or (step > 0 and row < rows - 1):
+            if step < 0:
+                self.action_cursor_up()
+            else:
+                self.action_cursor_down()
+            return
+        self.action_history(step)
+
     def remember(self, line: str) -> None:
-        if line and (not self.history or self.history[-1] != line):
-            self.history.append(line)
-        self._hpos = len(self.history)
+        if line and (not self.sent or self.sent[-1] != line):
+            self.sent.append(line)
+        self._hpos = len(self.sent)
 
     def action_history(self, step: int) -> None:
-        if not self.history:
+        if not self.sent:
             return
-        self._hpos = max(0, min(len(self.history), self._hpos + step))
-        self.value = self.history[self._hpos] if self._hpos < len(self.history) else ""
+        self._hpos = max(0, min(len(self.sent), self._hpos + step))
+        self.value = self.sent[self._hpos] if self._hpos < len(self.sent) else ""
         self.cursor_position = len(self.value)
 
     def action_complete(self) -> None:
@@ -600,13 +658,15 @@ class ChatApp(App):
     #pinned.important { border: double $cc-magenta; }
     #transfer { height: 1; padding: 0 2; display: none; background: $cc-panel; }
     #transfer.active { display: block; }
-    #inputbar { height: 3; border: heavy $cc-magenta; border-title-color: $cc-cyan;
+    #inputbar { height: auto; border: heavy $cc-magenta; border-title-color: $cc-cyan;
                 border-title-style: bold; background: $cc-bg; }
     #prompt { width: auto; padding: 0 1; }
-    #input { border: none; height: 1; padding: 0; background: $cc-bg; color: $cc-text; }
-    #input:focus { border: none; }
-    #input > .input--cursor { background: $cc-cyan; color: $cc-bg; }
-    #input > .input--placeholder { color: $cc-dim; }
+    #input { border: none; height: auto; min-height: 1; max-height: 5; padding: 0; background: $cc-bg;
+             color: $cc-text; }
+    #input:focus { border: none; background: $cc-bg; }
+    #input > .text-area--cursor { background: $cc-cyan; color: $cc-bg; }
+    #input > .text-area--placeholder { color: $cc-dim; }
+    #input > .text-area--selection { background: $cc-panel; }
     #hints { height: 1; background: $cc-panel; color: $cc-dim; padding: 0 1; }
     ModalScreen { align: center middle; background: $cc-bg 70%; }
     #dialog { max-height: 90%; }
@@ -1597,7 +1657,7 @@ class ChatApp(App):
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         line = event.value.strip()
         event.input.value = ""
         if not line:
