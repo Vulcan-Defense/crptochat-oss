@@ -523,3 +523,37 @@ def test_address_memory_adds_up_every_session(home):
             assert len(h.server.sessions[c.key].strikes.times) == 5
             assert h.server.sessions[c.key].strikes.hit() == "kick"   # the 6th, counted across sessions
     run(main())
+
+
+def test_over_quota_bad_signature_is_bad_auth_and_says_nothing_else(home):
+    """The quota is checked after the signatures: whoever cannot sign gets
+    bad_auth, not reg_limit (which would tell that the nick is free). A valid
+    signature for a new nick then gets reg_limit; an existing nick still logs in."""
+    async def attempt(port, nick, key, good=True):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        try:
+            nonce = b64d(decode(await reader.readline())["nonce"])
+            dh = crypto.x_pub(crypto.x_generate())
+            sig = crypto.sign(key, crypto.auth_message(nonce, nick, dh))
+            if not good:
+                sig = bytes([sig[0] ^ 1]) + sig[1:]
+            writer.write(encode({"t": "auth", "id": 0, "nick": nick, "ik": b64e(crypto.ed_pub(key)), "dh": b64e(dh),
+                                 "sig": b64e(sig), "dh_sig": b64e(crypto.sign(key, crypto.dh_message(nick, dh)))}))
+            reply = decode(await reader.readline())
+            return reply.get("code") if reply.get("t") == "err" else "ok"
+        finally:
+            writer.close()
+
+    async def main():
+        server = Server(str(home / "quota-order"), reg_limit=1)
+        port = await server.start("127.0.0.1", 0)
+        try:
+            first = crypto.ed_generate()
+            assert await attempt(port, "primeiro", first) == "ok"                   # uses the only slot
+            assert await attempt(port, "segundo", crypto.ed_generate(), good=False) == "bad_auth"
+            assert await attempt(port, "segundo", crypto.ed_generate()) == "reg_limit"
+            assert await attempt(port, "primeiro", first, good=False) == "bad_auth"
+            assert await attempt(port, "primeiro", first) == "ok"                   # existing nick: not limited
+        finally:
+            await server.stop()
+    run(main())

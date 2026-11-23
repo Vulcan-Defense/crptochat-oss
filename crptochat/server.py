@@ -687,9 +687,9 @@ class Server:
         """Refuse account-creation loops, including after a server restart.
 
         The database holds only a keyed IP hash and short-lived timestamps;
-        the clear address never reaches disk.  This check runs before the two
-        Ed25519 verifications required for a new account, so a client already
-        over quota cannot spend CPU by repeatedly creating fresh keys.
+        the clear address never reaches disk.  It runs after the signatures
+        are verified, so a client that cannot sign is told bad_auth and never
+        learns whether the nick exists or how its address stands on quota.
         """
         limit = self.limits["reg_per_hour"]
         if not limit:
@@ -823,11 +823,9 @@ class Server:
                 raise Refuse("bad_nick", f"nicks começando com '{GUEST_PREFIX}' são reservados para acesso anônimo")
             row = self.db.execute("SELECT nick, ik, role, banned_until, ban_reason FROM users WHERE nick_lower=?",
                                   (key,)).fetchone()
-            # Refuse an already exhausted registration window before expensive
-            # signature verification. Existing accounts remain able to log in.
-            if row is None:
-                self._check_registration_limit(sess.ip)
 
+        # Signatures first: whoever cannot sign gets bad_auth and learns nothing
+        # else (not whether the nick exists, nor how the address stands on quota).
         if not crypto.verify(ik, sig, crypto.auth_message(sess.nonce, nick, dh)):
             raise Refuse("bad_auth", "assinatura inválida")
         if not crypto.verify(ik, dh_sig, crypto.dh_message(nick, dh)):
@@ -857,6 +855,8 @@ class Server:
                 if self.reg_token is not None and not hmac.compare_digest(
                         str(msg.get("reg_token") or "").encode(), self.reg_token.encode()):
                     raise Refuse("reg_token", "este servidor exige um token de registro válido")
+                # only new accounts count; existing ones log in whatever the quota
+                self._check_registration_limit(sess.ip)
                 now = int(time.time())
                 self._record_registration(sess.ip, now)
                 self.db.execute("INSERT INTO users (nick_lower, nick, ik, created) VALUES (?,?,?,?)",
