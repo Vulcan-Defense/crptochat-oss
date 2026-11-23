@@ -10,7 +10,7 @@ from test_e2e import Harness, envelope_kind, messages, run, until
 
 from crptochat import crypto
 from crptochat.client import ChatClient
-from crptochat.protocol import b64d
+from crptochat.protocol import b64d, b64e
 
 
 @pytest.fixture(autouse=True)
@@ -258,3 +258,30 @@ def test_a_new_peer_has_all_its_attributes():
     for name, value in {"dropped": False, "guest": False, "role": "user", "away": False, "_pair": None,
                         "dmr": False, "got_v2": False, "trusted": True, "pending_ik": None}.items():
         assert getattr(peer, name) == value, name
+
+
+def test_a_v1_envelope_replayed_by_the_relay_is_shown_once(home):
+    """Before the contact answers, messages go out as v1 (an older client could
+    be on the other side) and v1 has no counter. The relay hands the same envelope
+    over again: it must not show up twice, before or after the first reply."""
+    async def main():
+        async with Harness(home) as h:
+            alice, bob = await h.client("alice"), await h.client("bob")
+            for text in ("um", "dois"):
+                await alice.send_dm("bob", text)
+            await until(lambda: len(messages(bob, "@alice")) == 2)
+            sent = bodies(h, "alice", "bob")
+            assert {envelope_kind(b) for b in sent} == {"v1"}                # one-way so far: v1 only
+            for body in sent + sent:                                         # the relay replays both, twice
+                h.server.sessions["bob"].send({"t": "direct", "from": "alice", "body": b64e(body)})
+            await alice.send_dm("bob", "três")                               # a fresh one still gets through
+            await until(lambda: len(messages(bob, "@alice")) == 3)
+            await asyncio.sleep(0.3)
+            assert messages(bob, "@alice") == [("alice", "um"), ("alice", "dois"), ("alice", "três")]
+
+            await bob.send_dm("alice", "respondi")                           # from now on v3
+            await until(lambda: messages(alice, "@bob"))
+            h.server.sessions["bob"].send({"t": "direct", "from": "alice", "body": b64e(sent[0])})
+            await asyncio.sleep(0.3)
+            assert [t for _, t in messages(bob, "@alice")].count("um") == 1
+    run(main())

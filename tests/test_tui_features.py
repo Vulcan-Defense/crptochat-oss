@@ -272,3 +272,125 @@ def test_anonymous_session_in_the_interface(home):
         assert not os.listdir(os.path.join(str(home / "cfg"), "identities"))
         await world.stop()
     asyncio.run(main())
+
+
+def test_a_direct_conversation_with_someone_unchecked_starts_with_a_warning(home):
+    """First contact is trust on first use: the key came from the server. The
+    conversation says so until the safety numbers are compared (/verify)."""
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await world.peer("bob")
+            carol = await world.peer("carol")
+            await type_line(pilot, "/msg bob oi")
+            await until(pilot, lambda: "@bob" in app.buffers and any("oi" in ln for ln in lines(app, "@bob")))
+            warning = [ln for ln in lines(app, "@bob") if "ainda não foi conferido" in ln]
+            assert len(warning) == 1 and "/verify bob" in warning[0]
+            assert lines(app, "@bob").index(warning[0]) == 0             # the first thing in the conversation
+
+            app.client.store.accept_key("carol", carol.identity.ik, verified=True)   # already checked: no warning
+            await type_line(pilot, "/msg carol oi")
+            await until(pilot, lambda: "@carol" in app.buffers and any("oi" in ln for ln in lines(app, "@carol")))
+            assert not any("ainda não foi conferido" in ln for ln in lines(app, "@carol"))
+        await world.stop()
+    asyncio.run(main())
+
+
+def test_the_message_box_grows_with_long_text_and_sends_it_whole(home):
+    """A long message wraps inside the box, which grows (up to 5 lines, then it
+    scrolls) instead of sliding sideways; Enter sends all of it."""
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await type_line(pilot, "/join #lobby")
+            await until(pilot, lambda: app.current == "#lobby")
+            box, bar = app.input, app.query_one("#inputbar")
+            assert box.size.height == 1 and bar.outer_size.height == 3          # empty: one line, as before
+
+            long = ("a sozinho. Quem está na 1.16 ou anterior instala de novo pelo site. "
+                    "Novidade: agora tem cliente web no navegador, sem instalar nada. ") * 2
+            box.value = long
+            await pilot.pause(0.1)
+            assert 2 <= box.size.height <= 5 and bar.outer_size.height == box.size.height + 2   # grew, wrapped
+            assert box.wrapped_document.height == box.size.height
+
+            box.value = long * 6                                                  # huge: capped at 5, scrolls
+            await pilot.pause(0.1)
+            assert box.size.height == 5
+
+            box.value = long
+            await pilot.pause(0.05)
+            await pilot.press("enter")
+            await until(pilot, lambda: any(long.strip()[:40] in ln for ln in lines(app, "#lobby")))
+            assert box.value == "" and box.size.height == 1                       # back to one line
+            sent = "".join(ln for ln in lines(app, "#lobby") if "a sozinho" in ln or "navegador" in ln)
+            assert "sem instalar nada" in sent
+
+            box.value = ""
+            box.insert("linha um\nlinha dois\r\nlinha três")                     # a paste with line breaks
+            await pilot.pause(0.05)
+            assert box.value == "linha um linha dois linha três"
+
+            # up/down move inside a wrapped message; the history only from its first/last row
+            box.value = long
+            await pilot.pause(0.05)
+            rows = box.wrapped_document.height
+            assert rows > 1
+            await pilot.press("up")
+            assert box.value == long                                             # moved up a row, no history
+            for _ in range(rows):
+                await pilot.press("up")
+            assert box.value != long                                             # top row: previous message
+        await world.stop()
+    asyncio.run(main())
+
+
+def test_a_burst_of_keys_ending_in_enter_sends_the_whole_line(home):
+    """A terminal (or the browser, or a fast typist) delivers "texto\\r" in one
+    read: every key is queued before the first is handled. Enter must still come
+    after the letters, or the line goes out empty (what the binary smoke caught)."""
+    from textual import events
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await type_line(pilot, "/join #lobby")
+            await until(pilot, lambda: app.current == "#lobby")
+            for ch in "rajada":
+                app.post_message(events.Key(ch, ch))
+            app.post_message(events.Key("enter", "\r"))
+            await until(pilot, lambda: any("rajada" in ln for ln in lines(app, "#lobby")))
+            assert app.input.value == ""
+        await world.stop()
+    asyncio.run(main())
+
+
+def test_in_the_browser_there_is_no_update_check(home, monkeypatch):
+    """The site serves each new version of the browser client: no check on connect,
+    and /update explains instead of reaching for the network (Pyodide has no
+    direct socket for it anyway)."""
+    from crptochat import update
+
+    def no_network(*a, **kw):
+        raise AssertionError("o navegador não deve consultar atualizações")
+    monkeypatch.setattr(tui, "IN_BROWSER", True)
+    monkeypatch.setattr(update, "latest", no_network)
+    monkeypatch.setattr(update, "apply", no_network)
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(100, 30)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await pilot.pause(0.2)
+            app.periodic_update_check()
+            await type_line(pilot, "/update")
+            await until(pilot, lambda: any("quem atualiza é o site" in ln for ln in lines(app)))
+        await world.stop()
+    asyncio.run(main())

@@ -58,8 +58,9 @@ keys.export_key("smoke")[:12]`);
 // 3. the zips fetched while the person types: rest of the stdlib and Pygments
 for (const name of ["stdlib-rest.zip", "later.zip"]) py.FS.writeFile("/lib/" + name, gz(name + ".gz"));
 run("stdlib restante e pygments", `
-import sys, importlib
-sys.path += ["/lib/stdlib-rest.zip", "/lib/later.zip"]; importlib.invalidate_caches()
+import crptoweb.mount
+for name in ("/lib/stdlib-rest.zip", "/lib/later.zip"):
+    crptoweb.mount.mount(name)                    # as main.js does
 import urllib.request, zipfile, wave
 import crptochat.update, crptochat.audio, crptochat.relayfile
 from rich.console import Console
@@ -68,6 +69,16 @@ c = Console(record=True, width=40, color_system="truecolor")
 c.print(Syntax("x = 1", "python"))
 assert "\\x1b[" in c.export_text(styles=True)
 "urllib, zipfile, wave, update/audio/relayfile, pygments"`);
+
+// 3b. submodules of packages that came from the boot zip but live in the later
+// one: codecs are looked up by name when first used ("idna" for any https host)
+run("codecs depois do boot e modo navegador", `
+import codecs, crptochat.tui
+for name in ("idna", "cp1252", "latin-1", "utf-16", "cp437", "mac-roman"):
+    codecs.lookup(name)
+assert "crptochat.acpt.app.br".encode("idna") == b"crptochat.acpt.app.br"
+assert crptochat.tui.IN_BROWSER                   # no update check: the site updates the page
+"idna e outros codecs; IN_BROWSER"`);
 
 // 4. no source shipped: bytecode only (tracebacks have no source lines)
 run("só bytecode", `
