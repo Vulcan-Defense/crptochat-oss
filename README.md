@@ -215,7 +215,9 @@ conexão, com valores menores para anônimos:
 | entradas em canal | 20/min, rajada de 50 | 6/min, rajada de 10 |
 
 Por endereço: 32 conexões simultâneas, 5 sessões anônimas e 5 nicks novos
-por hora. Cada envelope cifrado tem no máximo 64 KiB.
+por hora. O limite de novos nicks sobrevive a reinícios: o banco guarda por no
+máximo uma hora somente o hash com chave secreta do endereço e o horário de
+cada registro, nunca o IP em texto. Cada envelope cifrado tem no máximo 64 KiB.
 
 Quem passa do limite tem a mensagem recusada e leva uma infração: na 1ª
 recebe um aviso, na 3ª fica silenciado por 60 s nos canais e na 6ª dentro de
@@ -271,7 +273,10 @@ O que fica em disco no servidor (`registry.db`): nick → chave pública, e
 nome/tipo/salt/verificador dos canais, as prekeys públicas de cada nick e,
 se a caixa postal estiver ligada, os envelopes cifrados deixados para quem
 está offline (destinatário, horário e bytes opacos; veja *Mensagens para quem
-está offline*). Nenhuma mensagem legível, nenhum arquivo, nenhum log de conversa.
+está offline*). Quando o limite de novos nicks está ligado, ficam também por
+até uma hora os hashes com chave secreta dos endereços que acabaram de criar
+uma conta e seus horários. Nenhuma mensagem legível, nenhum arquivo, nenhum
+IP em texto, nenhum log de conversa.
 
 A caixa postal tem os seus limites, também ajustáveis pelo console:
 `mail_days` (14 dias; 0 desliga), `mail_per_user` (200 envelopes guardados

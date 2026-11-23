@@ -179,3 +179,15 @@ def test_mlkem_is_only_on_where_it_actually_works(monkeypatch):
     assert crypto._load_mlkem() is None
     monkeypatch.undo()
     assert crypto._load_mlkem() is mlkem
+
+
+def test_mlkem_is_disabled_when_the_provider_cannot_get_entropy(monkeypatch):
+    """A provider failure during the optional capability probe is not fatal."""
+    from cryptography.exceptions import InternalError
+    from cryptography.hazmat.primitives.asymmetric import mlkem
+
+    def unavailable():
+        raise InternalError("entropy unavailable", [])
+
+    monkeypatch.setattr(mlkem.MLKEM768PrivateKey, "generate", staticmethod(unavailable))
+    assert crypto._load_mlkem() is None
