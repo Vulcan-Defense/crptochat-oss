@@ -107,7 +107,8 @@ function extras(py) {
   extrasPromise ??= (async () => {
     for (const name of ["stdlib-rest.zip", "later.zip"]) {
       py.FS.writeFile("/lib/" + name, new Uint8Array(await fetchGz(here(`py/${name}.gz`))));
-      py.runPython(`import sys, importlib; '/lib/${name}' in sys.path or sys.path.append('/lib/${name}'); importlib.invalidate_caches()`);
+      // also for packages already imported from the boot zip (crptoweb/mount.py)
+      py.runPython(`import crptoweb.mount; crptoweb.mount.mount('/lib/${name}')`);
     }
     mark("extras");
   })().catch((err) => { extrasPromise = null; throw err; });
