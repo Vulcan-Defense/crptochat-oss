@@ -179,3 +179,24 @@ def test_mlkem_is_only_on_where_it_actually_works(monkeypatch):
     assert crypto._load_mlkem() is None
     monkeypatch.undo()
     assert crypto._load_mlkem() is mlkem
+
+
+def test_a_first_offline_message_without_ml_kem_says_so(home):
+    """First contact, bob offline, the server hands over his prekey without the
+    ML-KEM part. Nothing tells an older client from a stripped bundle yet, so the
+    message goes with X25519 only, and alice is told it did."""
+    async def main():
+        async with Harness(home) as h:
+            bob = await h.client("bob")
+            await published(h, bob)
+            h.server.db.execute("UPDATE prekeys SET kem=NULL, kem_sig=NULL WHERE nick_lower='bob'")
+            h.server.db.commit()
+            alice = await h.client("alice")
+            await alice.resolve("bob")
+            await leave(h, bob)
+            await alice.send_dm("bob", "sem ML-KEM")
+            assert bytes(mail_rows(h, "bob")[0][1])[0] != crypto.MAIL_PQ
+            notes = [d["text"] for k, d in alice.events if k == "system" and d.get("buffer") == "@bob"]
+            assert any("sem a camada pós-quântica" in t for t in notes)
+            assert not alice.store.uses_pq("bob")
+    run(main())

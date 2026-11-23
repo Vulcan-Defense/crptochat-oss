@@ -255,6 +255,12 @@ class Mailbox:
                                "untrusted")
         if kem is not None and crypto.HAS_MLKEM:
             self.client.store.set_uses_pq(peer.nick)
+        elif kem is None and crypto.HAS_MLKEM:
+            # first contact: an older client or the browser has no ML-KEM, and a
+            # server could also have removed it; nothing tells them apart yet
+            self.client.sys(f"recado para {peer.nick} guardado só com X25519, sem a camada pós-quântica: o servidor "
+                            "não entregou uma prekey ML-KEM (cliente antigo, navegador, ou removida no caminho)",
+                            "warn", "@" + peer.nick)
         prefix, sk = crypto.mail_start(peer.ik, spk_id, spk, opk_id, opk_pub,
                                        kem if crypto.HAS_MLKEM else None)
         return {"prefix": prefix, "chain": crypto.Chain(sk), "t": time.time(), "ik": peer.ik}

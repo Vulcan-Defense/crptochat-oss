@@ -25,7 +25,7 @@ from . import audio
 from .audio import AudioError, Player, Recorder, sniff
 from .client import ChatClient, ChatError, NeedPassphrase
 from .p2p import human_size
-from .protocol import MAX_TTL, format_duration, parse_duration, valid_chan, valid_nick
+from .protocol import MAX_TTL, format_duration, is_guest_nick, parse_duration, valid_chan, valid_nick
 from . import themes, update, vault
 from .notify import Notifier
 from .store import BadPassphrase, Identity, load_prefs, save_prefs
@@ -1093,7 +1093,25 @@ class ChatApp(App):
         if name not in self.buffers:
             self.buffers[name] = Buffer(name)
             self.render_buffers()
+            self._unverified_note(name)
         return self.buffers[name]
+
+    def _unverified_note(self, name: str) -> None:
+        """First line of a direct conversation with someone not yet checked: the
+        key came from the server, so until the safety numbers are compared the
+        server could be in the middle (TOFU only protects later changes)."""
+        nick = name[1:] if name.startswith("@") else ""
+        if not valid_nick(nick) or is_guest_nick(nick) or self.client.store.is_verified(nick):
+            return
+        text = (f"⚠ {nick} ainda não foi conferido. A chave veio do servidor: até vocês compararem o número "
+                f"de segurança por outro canal (/whois {nick}, depois /verify {nick}), o servidor poderia "
+                f"estar no meio desta conversa.")
+        color = level_color("warn")
+        # part of the conversation, not news: no unread count, no alert
+        line = Text.assemble(self.stamp(), ("◈ " if self.narrow else "        ◈ ", color), (clean(text), color))
+        self.buffers[name].lines.append(line)
+        if name == self.current:
+            self.log_w.write(line)
 
     def switch(self, name: str) -> None:
         if name not in self.buffers:
