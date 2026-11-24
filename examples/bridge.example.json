@@ -1,0 +1,59 @@
+{
+  "server": "chat.exemplo.invalid:7777",
+  "nick": "otbot",
+  "tls_pin": "SUBSTITUA_PELA_FINGERPRINT_SHA_256_DO_CERTIFICADO_DO_SERVIDOR",
+  "allowed_users": ["alice", "bob"],
+  "passphrase_env": "CRPTOCHAT_PASSPHRASE",
+  "reg_token_env": "CRPTOCHAT_REG_TOKEN",
+  "key_dir": "/srv/crptochat/keys",
+  "llm": {
+    "backend": "ollama",
+    "base_url": "http://127.0.0.1:11434",
+    "model": "llama3.1",
+    "timeout_s": 60,
+    "system": "Responda em português, de forma curta. Use só os dados de equipamentos recebidos no prompt."
+  },
+  "ot": {
+    "http": {
+      "endpoints": {
+        "temperatura": {
+          "url": "https://clp.exemplo.invalid/api/status",
+          "field": "sensores.0.temperatura",
+          "timeout_s": 5,
+          "headers_env": {"Authorization": "OT_HTTP_TOKEN"}
+        }
+      }
+    },
+    "modbus": {
+      "devices": {
+        "clp1": {
+          "host": "10.10.0.10",
+          "port": 502,
+          "unit": 1,
+          "timeout_s": 3,
+          "registers": {
+            "temperatura": {"function": 4, "address": 100, "count": 1, "scale": 0.1},
+            "pressao": {"function": 3, "address": 200, "count": 1, "scale": 0.01}
+          }
+        }
+      }
+    },
+    "mqtt": {
+      "brokers": {
+        "telemetria": {
+          "host": "mqtt.exemplo.invalid",
+          "port": 8883,
+          "tls": true,
+          "username_env": "OT_MQTT_USER",
+          "password_env": "OT_MQTT_PASS",
+          "timeout_s": 5,
+          "topics": ["planta/+/temperatura", "planta/+/vibracao"]
+        }
+      }
+    }
+  },
+  "chunk_chars": 1800,
+  "max_reply_chars": 12000,
+  "max_prompt_chars": 8000,
+  "min_interval_s": 1.0
+}

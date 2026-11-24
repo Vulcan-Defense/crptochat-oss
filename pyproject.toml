@@ -20,6 +20,7 @@ crptochat = "crptochat.cli:main"
 crptochat-server = "crptochat.server:main"
 crptochat-dash = "crptochat.dash:main"
 crptochat-admin = "crptochat.admin:main"
+crptochat-bridge = "crptochat.bridge:main"
 
 [tool.setuptools]
 packages = ["crptochat"]

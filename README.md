@@ -971,6 +971,88 @@ entre as duas máquinas, como antes. É mais rápido numa rede local, mas **cada
 lado vê o endereço IP do outro**; o chat pede confirmação mostrando isso. É
 também o único jeito de mandar arquivo para quem usa cliente antigo.
 
+## Bridge LLM / IT-OT
+
+`crptochat-bridge` é um processo headless que conversa por **mensagens diretas
+cifradas**, como uma pessoa com nick registrado. Ele não entra em canais, não
+aceita arquivos e não manda operação nenhuma em claro para o servidor: prompt,
+resposta e leituras de equipamento trafegam dentro de envelopes E2EE entre o
+cliente de chat e a bridge. O relay continua vendo só os metadados de sempre
+(quem fala com quem, quando, faixa de tamanho e IP da conexão).
+
+**Limite de privacidade, sem eufemismo:** o crptochat garante o cifrado **até a
+bridge**. A partir dela o prompt vai em plaintext para o backend. Com Ollama em
+`127.0.0.1`, o texto não sai da máquina onde a LLM roda; com uma API
+OpenAI-compatible, **o provedor vê o prompt e a resposta**. Isso não é E2EE com
+o provedor, nem com a LLM remota. Use um backend local/privado se o dado for
+sensível. Veja também [PRIVACIDADE.md](PRIVACIDADE.md).
+
+### Configuração
+
+- Modelo completo em [`examples/bridge.example.json`](examples/bridge.example.json).
+- Caminho padrão: `$CRPTOCHAT_HOME/bridge.json` (ou `CRPTOCHAT_BRIDGE_CONFIG`);
+  `--config ARQUIVO` escolhe outro. `--init ARQUIVO` cria um modelo com permissão
+  `0600`, `--check` valida sem conectar.
+- **Nenhum segredo vai no JSON**: ele só contém *nomes* de variáveis de ambiente
+  (`passphrase_env`, `reg_token_env`, `api_key_env`, `headers_env`, `username_env`,
+  `password_env`). A chave do nick é lida do mesmo `key_dir`/cofre usado pelo
+  cliente normal — a bridge nunca cria identidade nova.
+- `tls_pin` é obrigatório: a fingerprint SHA-256 do certificado do servidor, a
+  mesma que você confere com `crptochat --pin`. Não existe modo sem TLS aqui.
+- `allowed_users` é a allowlist de nicks que podem falar com a bridge; mensagens
+  de qualquer outro nick são ignoradas.
+
+Exemplo de backend de API (o resto do arquivo continua igual):
+
+```json
+"llm": {
+  "backend": "openai",
+  "base_url": "https://api.openai.com",
+  "model": "gpt-4o-mini",
+  "api_key_env": "OPENAI_API_KEY",
+  "timeout_s": 60
+}
+```
+
+```sh
+export CRPTOCHAT_PASSPHRASE='…'        # senha da identidade do nick da bridge
+export OPENAI_API_KEY='…'              # só se o backend for openai
+crptochat-bridge --check
+crptochat-bridge
+```
+
+Se a chave de um interlocutor mudar, a bridge **não aceita**: bloqueia as
+respostas e avisa no log, igual ao cliente quando recusa uma mudança de chave.
+A confirmação tem de ser feita fora da bridge, por outro meio. Nada de prompt ou
+resposta é escrito em log ou em arquivo; o histórico da conversa fica só na RAM,
+limitado a poucas mensagens.
+
+### Adapters IT/OT
+
+Todos são **somente leitura** e usam allowlist explícita de nomes:
+
+| Adapter | O que permite | O que nunca faz |
+|---|---|---|
+| `http` | `GET` em endpoints HTTPS/JSON fixos, com campo opcional (`field`) e token por env | POST/PUT/DELETE, URL arbitrária enviada pelo chat |
+| `modbus` | leitura de holding/input registers (FC 03/04) com `scale` | escrita de registradores (FC 05/06/15/16) |
+| `mqtt` | subscrição de tópicos fixos, último valor em memória | publicação em qualquer tópico |
+
+`http://` só é aceito em loopback (Ollama, CLP local); todo o resto exige
+`https://` com certificado verificado. Nomes de endpoints, registradores e
+tópicos vêm do arquivo de config — o usuário do chat não consegue pedir um
+endereço livre.
+
+No chat, as mensagens diretas para o nick da bridge aceitam:
+
+- `llm <pergunta>` (ou só a pergunta) — conversa com o LLM;
+- `llmctx <pergunta>` — junta as leituras IT/OT disponíveis ao prompt;
+- `ot lista`, `ot ler http:temperatura`, `ot contexto` — consulta aos adapters;
+- `status`, `ajuda`.
+
+Respostas longas são divididas em várias DMs numeradas (`[1/3] …`), cada uma
+bem abaixo do limite do protocolo. Um intervalo mínimo por usuário evita
+enchentes de prompt.
+
 ## Modelo de segurança
 
 | Primitiva | Uso |
