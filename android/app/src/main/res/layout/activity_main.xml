@@ -21,4 +21,38 @@
         android:textColor="#FFFFFF"
         android:textSize="18sp"
         android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/vpn_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#E60B0B12"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="8dp">
+
+        <Button
+            android:id="@+id/vpn_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:backgroundTint="#00D9FF"
+            android:minWidth="0dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/vpn_connect"
+            android:textColor="#0B0B12"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/vpn_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:text="@string/vpn_status_off"
+            android:textColor="#FF2BD6"
+            android:textSize="12sp"
+            android:typeface="monospace" />
+    </LinearLayout>
 </FrameLayout>
