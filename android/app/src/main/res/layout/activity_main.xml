@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <WebView
+        android:id="@+id/chat_webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAutofill="noExcludeDescendants" />
+
+    <TextView
+        android:id="@+id/error_message"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#0B0B12"
+        android:gravity="center"
+        android:padding="32dp"
+        android:text="@string/configuration_error"
+        android:textAlignment="center"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp"
+        android:visibility="gone" />
+</FrameLayout>
