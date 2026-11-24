@@ -22,7 +22,7 @@ impor uma política ao servidor alheio.
 | Site de downloads | Nada enviado pela página; a hospedagem pode registrar requisições HTTP comuns | IP, horário e arquivo pedido, para a hospedagem |
 | GitHub (código, releases, atualizações) | Nada seu é publicado pelo cliente | IP nas consultas à API e no download dos arquivos |
 | Cliente de terminal | Chave cifrada pela sua senha e preferências locais | nick, chave pública e versão no login; envelopes cifrados |
-| Servidor | Contas, canais, cargos e bans, chaves públicas e one-time keys, histórico cifrado com autor/horário, recados fixados em claro, envelopes offline; IP pseudonimizado | metadados das conexões, inclusive o IP, enquanto a sessão dura |
+| Servidor | Contas, canais, cargos e bans, chaves públicas e one-time keys, histórico cifrado com autor/horário, recados fixados em claro, envelopes offline; IP pseudonimizado | metadados das conexões, inclusive o IP, durante a sessão e até 10 min depois |
 | Cliente web | Chaves e preferências no IndexedDB; arquivos do build no cache do service worker | os mesmos metadados do cliente de terminal |
 
 O servidor é **cego** em relação ao conteúdo: mensagens, voz e arquivos são
@@ -118,8 +118,9 @@ anonimização**: o IP não é gravado em texto, mas também não é irreversív
 
 Em memória ficam, durante a sessão e por mais `ip_memory` (padrão 10 minutos)
 após a desconexão, contadores de limite de taxa e infrações por
-conexão/endereço. O **IP em texto fica na memória enquanto a sessão está
-aberta**. Bans de canal de anônimos guardam o endereço **na RAM até o servidor
+conexão/endereço. Esses contadores usam o **IP em texto como chave**, então o
+IP fica na memória enquanto a sessão está aberta **e por até `ip_memory`
+(padrão 10 minutos) depois da desconexão**. Bans de canal de anônimos guardam o endereço **na RAM até o servidor
 reiniciar**, sem expiração por tempo.
 
 O painel (`crptochat-dash`) mostra só contagens agregadas: nenhum nick, canal,
