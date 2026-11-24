@@ -152,7 +152,7 @@ chama programas locais e não funciona no navegador).
 ```sh
 python3 web/fetch_vendor.py          # baixa e confere web/vendor/ (~19 MB)
 (cd web && npm ci)                   # o build roda o Pyodide no Node (precisa do Node 18+)
-python3 web/build.py                 # gera web/dist/
+python3 web/build.py                 # gera web/dist/ (build de produção, reprodutível)
 node web/smoke.mjs                   # opcional: confere o build (Pyodide no Node)
 node web/e2e.mjs                     # opcional: ponta a ponta no Chromium (precisa do crptochat instalado)
 
@@ -162,6 +162,22 @@ crptochat-server --no-tls --ws-port 7778 --ws-origin http://localhost:8123
 # servir web/dist (precisa do tipo certo para .mjs e .wasm; o http.server do Python 3.13 já serve)
 python3 -m http.server 8123 --bind 127.0.0.1 --directory web/dist
 ```
+
+Para iterar sem esperar pela pré-compilação (muda `.py`, roda de novo), use o
+build de desenvolvimento:
+
+```sh
+python3 web/build_dev.py             # gera web/dist-dev/, sem Node e sem precompile.mjs
+python3 -m http.server 8124 --bind 127.0.0.1 --directory web/dist-dev
+```
+
+Ele entrega o Python em fonte, com a stdlib inteira: é maior e mais lento, e o
+resultado não é reprodutível. Serve só para desenvolvimento local — não publique
+`dist-dev/`. Ele grava apenas em `web/dist-dev/` (incluído no `.gitignore`) e
+nunca apaga nem substitui `web/dist/`, que continua sendo o build de produção
+gerado por `build.py` (com `SHA256SUMS` e bytecode pré-compilado). O
+`dist-dev/` também tem `SHA256SUMS` e um `sw.js` com a lista de arquivos do
+build, para o service worker trocar de build quando o código muda.
 
 Abra `http://localhost:8123`, informe `ws://localhost:7778`, um nick e uma
 senha. Em produção o endereço é `wss://`, com certificado de CA pública.

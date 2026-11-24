@@ -25,9 +25,11 @@ import path from "node:path";
 
 const [vendor, appZip, outDir] = process.argv.slice(2).map((p) => path.resolve(p));
 const manifest = JSON.parse(fs.readFileSync(path.join(vendor, "manifest.json"), "utf8"));
-const py = await loadPyodide({ indexURL: path.join(vendor, "pyodide") + "/", fullStdLib: false, stdout: () => {}, stderr: (l) => console.error(l) });
-await py.loadPackage(manifest.pyodide_packages.map((n) => path.join(vendor, "pyodide", JSON.parse(fs.readFileSync(path.join(vendor, "pyodide", "pyodide-lock.json"), "utf8")).packages[n].file_name)), { messageCallback: () => {} });
-await py.loadPackage(manifest.wheels.map((f) => path.join(vendor, "wheels", f)), { messageCallback: () => {} });
+const toPath = (p) => p.replace(/\\/g, "/");
+const py = await loadPyodide({ indexURL: toPath(path.join(vendor, "pyodide")) + "/", fullStdLib: false, stdout: () => {}, stderr: (l) => console.error(l) });
+const lock = JSON.parse(fs.readFileSync(path.join(vendor, "pyodide", "pyodide-lock.json"), "utf8"));
+await py.loadPackage(manifest.pyodide_packages.map((n) => toPath(path.join(vendor, "pyodide", lock.packages[n].file_name))), { messageCallback: () => {} });
+await py.loadPackage(manifest.wheels.map((f) => toPath(path.join(vendor, "wheels", f))), { messageCallback: () => {} });
 py.unpackArchive(new Uint8Array(fs.readFileSync(appZip)), "zip", { extractDir: "/app" });
 
 // what the page imports before the login (main.js: boot); those stdlib modules go
