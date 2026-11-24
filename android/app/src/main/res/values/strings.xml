@@ -1,16 +1,4 @@
 <resources>
     <string name="app_name">Crptochat</string>
     <string name="configuration_error">Configure uma origem HTTPS válida para o chat antes de distribuir o aplicativo.</string>
-    <string name="vpn_connect">▓▒░ CONECTAR VPN</string>
-    <string name="vpn_disconnect">▓▒░ DESCONECTAR VPN</string>
-    <string name="vpn_status_off">VPN DESLIGADA</string>
-    <string name="vpn_status_on">VPN ATIVA · wg0</string>
-    <string name="vpn_status_connecting">VPN CONECTANDO…</string>
-    <string name="vpn_permission_needed">Autorize a conexão VPN do Android para continuar.</string>
-    <string name="vpn_permission_denied">Permissão VPN negada.</string>
-    <string name="vpn_select_config">Selecione o arquivo de configuração WireGuard (.conf)</string>
-    <string name="vpn_config_error">Configuração WireGuard inválida ou ilegível.</string>
-    <string name="vpn_connected">VPN conectada.</string>
-    <string name="vpn_disconnected">VPN desconectada.</string>
-    <string name="vpn_failed">Falha ao conectar VPN: %1$s</string>
 </resources>

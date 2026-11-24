@@ -45,6 +45,4 @@ android {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.12.1")
-    // Userspace WireGuard tunnel; its AAR declares the VpnService for us.
-    implementation("com.wireguard.android:tunnel:1.0.20250531")
 }

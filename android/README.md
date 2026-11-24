@@ -65,7 +65,6 @@ o mesmo relay por WebSocket.
 | API | `minSdk 26` · `compileSdk/targetSdk 36` |
 | Permissões | nenhuma de câmera, microfone, arquivos ou localização |
 | Ponte JavaScript | nenhuma |
-| VPN | WireGuard userspace, manual, perfil importado pelo usuário |
 | Licença | MIT |
 
 ---
@@ -82,38 +81,6 @@ o mesmo relay por WebSocket.
 - Ícone cyberpunk: balão neon com prompt `>_`, glitch magenta e grade de
   terminal — adaptive, round, legacy e monochrome (tema Android 13).
 - Gerador de ícones reproduzível, sem dependência de PIL.
-- **VPN WireGuard manual**: botão `▓▒░ CONECTAR VPN` na barra inferior.
-
----
-
-## ▓▒░ VPN // WIREGUARD ░▒▓
-
-O app embute o tunnel userspace oficial do WireGuard
-(`com.wireguard.android:tunnel`) e conecta **somente quando o usuário pede**:
-
-1. Toque em `▓▒░ CONECTAR VPN`.
-2. O Android pede a autorização padrão de conexão VPN (uma única vez).
-3. Escolha um arquivo `.conf` de configuração WireGuard.
-4. O botão passa a `DESCONECTAR VPN` e o status mostra `VPN ATIVA · wg0`.
-
-<details>
-<summary><b>Por que importar o perfil?</b></summary>
-
-Nenhuma chave privada ou endpoint de VPN é embutido no APK. O arquivo é lido
-pelo Android via *content provider* e usado apenas na memória para abrir o
-túnel. Depois de desconectar, a configuração não é salva pelo app.
-
-</details>
-
-> [!IMPORTANT]
-> O endpoint do chat continua fixo em `wss://crptochat.acpt.app.br/ws`. A VPN
-> muda a rota de rede, não o destino do WebSocket. Se o túnel estiver ativo,
-> todo o tráfego do WebView passa por ele.
-
-> [!WARNING]
-> Para publicar na Play Store, declare o uso de VPN no Play Console e mantenha
-> a política de privacidade atualizada. O diálogo de consentimento do Android
-> é obrigatório e não pode ser suprimido.
 
 ---
 
@@ -178,7 +145,7 @@ cptochat-android/
 │   ├── build.gradle.kts          # chatOrigin / chatWsUrl, API 36
 │   └── src/main/
 │       ├── AndroidManifest.xml
-│       ├── java/.../MainActivity.kt   # WebView, CSP, pin do WS, VPN WireGuard
+│       ├── java/.../MainActivity.kt   # WebView, CSP, pin do WebSocket
 │       └── res/mipmap-*              # ícone cyberpunk
 ├── docs/screenshots/app-main.png       # print real do app rodando
 ├── tools/generate_icons.py             # regera os PNGs do ícone
