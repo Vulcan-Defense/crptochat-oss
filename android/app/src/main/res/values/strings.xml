@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Crptochat</string>
+    <string name="configuration_error">Configure uma origem HTTPS válida para o chat antes de distribuir o aplicativo.</string>
+</resources>
