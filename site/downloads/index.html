@@ -10,161 +10,279 @@
 <meta name="description" content="Chat de terminal com criptografia ponta a ponta, código aberto (MIT). Double Ratchet, camada pós-quântica e mensagens offline. Baixe o cliente, confira a assinatura e conecte em crptochat.acpt.app.br.">
 <style>
   :root {
-    --bg: #07070f; --bg2: #0d0d1a; --panel: #11111f; --panel2: #161629; --line: #26264a; --text: #e8e8f4; --dim: #8d8db0;
-    --cyan: #3cf0ff; --magenta: #ff2fa0; --yellow: #ffe14d; --green: #3dff8a; --orange: #ffaa33; --violet: #9d7bff;
-    --glow-c: 0 0 18px rgba(60, 240, 255, .35); --glow-m: 0 0 18px rgba(255, 47, 160, .35);
+    --bg: #080810; --bg2: #0e0e1c; --panel: #121221; --panel2: #191930; --line: #2b2b50;
+    --text: #dcdcf0; --bright: #f7f7ff; --dim: #a3a3c2;
+    --cyan: #4ceaff; --magenta: #ff45a6; --yellow: #ffe36b; --green: #55f59a; --orange: #ffb454; --violet: #a88bff;
+    --glow-c: 0 0 18px rgba(76, 234, 255, .32); --glow-m: 0 0 18px rgba(255, 69, 166, .32);
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --r: 12px; --r-sm: 8px;
+    --edge: 1px solid rgba(126, 126, 190, .22);
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 64px; }
-  body { margin: 0; color: var(--text); font: 16px/1.65 var(--mono); background: var(--bg); overflow-x: hidden; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 76px; }
+  body { margin: 0; color: var(--text); font: 16px/1.7 var(--sans); background: var(--bg); overflow-x: hidden; }
+  /* a interface continua monoespaçada; a leitura dos textos longos usa a fonte do sistema */
+  nav.top, .brand, .chip, h1, h2, .term, pre, code, kbd, .dl small, .stat, .tabs button,
+  .search, .copy, .toggle, table, .fp, .card .v, .scale, .btn small { font-family: var(--mono); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 3px; }
 
   /* fundo: grade em perspectiva + brilho, tudo CSS */
   .bg { position: fixed; inset: 0; z-index: -2; pointer-events: none;
-        background: radial-gradient(1200px 600px at 80% -10%, rgba(255, 47, 160, .16), transparent 60%),
-                    radial-gradient(900px 500px at -10% 20%, rgba(60, 240, 255, .12), transparent 60%), var(--bg); }
+        background: radial-gradient(1100px 620px at 82% -8%, rgba(255, 69, 166, .17), transparent 62%),
+                    radial-gradient(900px 560px at -8% 18%, rgba(76, 234, 255, .13), transparent 62%),
+                    radial-gradient(700px 500px at 50% 110%, rgba(168, 139, 255, .10), transparent 70%), var(--bg); }
   .bg::after { content: ""; position: absolute; left: -50%; right: -50%; bottom: -20%; height: 70%;
-               background-image: linear-gradient(rgba(60, 240, 255, .12) 1px, transparent 1px),
-                                 linear-gradient(90deg, rgba(60, 240, 255, .12) 1px, transparent 1px);
+               background-image: linear-gradient(rgba(76, 234, 255, .10) 1px, transparent 1px),
+                                 linear-gradient(90deg, rgba(76, 234, 255, .10) 1px, transparent 1px);
                background-size: 48px 48px; transform: perspective(500px) rotateX(62deg);
                mask-image: linear-gradient(to top, #000 10%, transparent 85%);
                -webkit-mask-image: linear-gradient(to top, #000 10%, transparent 85%);
                animation: grid 14s linear infinite; }
   @keyframes grid { to { background-position: 0 480px, 0 0; } }
-  .scan { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .25;
+  .scan { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .18;
           background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, .35) 2px 3px); }
 
-  a { color: var(--cyan); text-underline-offset: 3px; }
-  a:hover { color: #fff; text-shadow: var(--glow-c); }
+  a { color: var(--cyan); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { color: var(--bright); text-shadow: var(--glow-c); }
   code { color: var(--yellow); }
   p code, li code, td code, .box code { overflow-wrap: anywhere; word-break: break-word; }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px 80px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px 80px; }
+  .skip { position: absolute; left: -9999px; top: 8px; z-index: 30; background: var(--cyan); color: var(--bg);
+          padding: 8px 14px; border-radius: var(--r-sm); font-family: var(--mono); font-weight: bold; }
+  .skip:focus { left: 16px; }
 
   /* barra fixa */
-  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            background: rgba(7, 7, 15, .72); border-bottom: 1px solid var(--line); }
-  nav.top .in { max-width: 1040px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 18px; align-items: center; }
-  .brand { color: var(--yellow); font-weight: bold; letter-spacing: .12em; text-decoration: none; white-space: nowrap; }
+  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%);
+            background: linear-gradient(180deg, rgba(8, 8, 16, .94), rgba(8, 8, 16, .76));
+            border-bottom: 1px solid rgba(126, 126, 190, .2); }
+  nav.top .in { max-width: 1080px; margin: 0 auto; padding: 11px 20px; display: flex; gap: 20px; align-items: center; }
+  .brand { display: inline-flex; align-items: center; gap: 9px; color: var(--yellow); font-weight: bold;
+           letter-spacing: .1em; font-size: 14px; text-decoration: none; white-space: nowrap; }
+  .brand::before { content: ""; width: 10px; height: 10px; border-radius: 3px; transform: rotate(45deg);
+                   background: linear-gradient(135deg, var(--cyan), var(--magenta)); box-shadow: var(--glow-c); }
   .brand span { color: var(--magenta); }
   nav.top ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
   nav.top ul::-webkit-scrollbar { display: none; }
-  nav.top li a { display: block; padding: 4px 10px; color: var(--dim); text-decoration: none; font-size: 13px;
-                 border: 1px solid transparent; white-space: nowrap; }
-  nav.top li a.on, nav.top li a:hover { color: var(--cyan); border-color: var(--line); text-shadow: none; }
+  nav.top li a { position: relative; display: block; padding: 7px 11px; color: var(--dim); text-decoration: none; font-size: 12.5px;
+                 border: 1px solid transparent; border-radius: var(--r-sm); white-space: nowrap; transition: color .15s, background .15s, border-color .15s; }
+  nav.top li a:hover, nav.top li a.on { color: var(--bright); background: rgba(76, 234, 255, .07); border-color: rgba(76, 234, 255, .18); text-shadow: none; }
+  nav.top li a.on::after { content: ""; position: absolute; left: 11px; right: 11px; bottom: 3px; height: 1px;
+                           background: var(--cyan); box-shadow: var(--glow-c); }
   .progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0;
-              background: linear-gradient(90deg, var(--cyan), var(--magenta)); box-shadow: var(--glow-m); }
+              background: linear-gradient(90deg, var(--cyan), var(--violet), var(--magenta)); box-shadow: var(--glow-m); }
 
   /* topo */
-  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 32px; align-items: center; padding: 56px 0 24px; }
-  .chip { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); padding: 2px 10px;
-          font-size: 12px; color: var(--green); background: rgba(61, 255, 138, .06); }
+  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center; padding: 68px 0 24px; }
+  .chip { display: inline-flex; gap: 9px; align-items: center; border: 1px solid rgba(85, 245, 154, .28); padding: 5px 12px;
+          border-radius: 999px; font-size: 11.5px; letter-spacing: .02em; color: var(--green); background: rgba(85, 245, 154, .07); }
   .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green);
             animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
-  h1 { margin: 14px 0 12px; font-size: clamp(30px, 5vw, 46px); line-height: 1.05; letter-spacing: -.02em; }
+  h1 { margin: 18px 0 16px; font-size: clamp(32px, 5.2vw, 54px); line-height: 1.04; letter-spacing: -.035em; }
   h1 .a { color: var(--cyan); text-shadow: var(--glow-c); }
-  h1 .b { display: block; color: var(--magenta); text-shadow: var(--glow-m); position: relative; }
+  h1 .b { display: block; color: var(--magenta); text-shadow: var(--glow-m); position: relative; width: max-content; max-width: 100%; }
   .glitch { position: relative; }
   .glitch::before, .glitch::after { content: attr(data-t); position: absolute; inset: 0; pointer-events: none; }
   .glitch::before { color: var(--cyan); clip-path: inset(0 0 60% 0); transform: translate(-2px); animation: g1 3.2s steps(1) infinite; }
   .glitch::after { color: var(--yellow); clip-path: inset(55% 0 0 0); transform: translate(2px); animation: g2 2.7s steps(1) infinite; }
   @keyframes g1 { 0%, 92%, 100% { opacity: 0; } 93%, 96% { opacity: .8; transform: translate(-3px, -1px); } }
   @keyframes g2 { 0%, 88%, 100% { opacity: 0; } 89%, 91% { opacity: .7; transform: translate(3px, 1px); } }
-  .lead { color: #c9c9e2; max-width: 34em; }
-  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
-  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 12px 18px; font: inherit; font-weight: bold; cursor: pointer;
-         text-decoration: none; border: 1px solid var(--cyan); color: var(--bg); background: var(--cyan);
-         box-shadow: var(--glow-c); transition: transform .12s, box-shadow .12s; }
-  .btn:hover { transform: translateY(-2px); color: var(--bg); text-shadow: none; box-shadow: 0 0 28px rgba(60, 240, 255, .6); }
-  .btn.ghost { background: transparent; color: var(--cyan); box-shadow: none; }
-  .btn.ghost:hover { color: #fff; }
-  .btn small { font-weight: normal; opacity: .75; }
+  .lead { color: var(--dim); max-width: 38em; font-size: 17px; line-height: 1.65; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; padding: 11px 19px;
+         font: 600 13px/1.2 var(--mono); cursor: pointer; text-decoration: none; border-radius: var(--r-sm);
+         border: 1px solid rgba(76, 234, 255, .8); color: #04121a;
+         background: linear-gradient(135deg, var(--cyan), #7ef0df); box-shadow: var(--glow-c);
+         transition: transform .15s, box-shadow .15s, border-color .15s, background .15s; }
+  .btn:hover { transform: translateY(-2px); color: #04121a; text-shadow: none; box-shadow: 0 10px 30px rgba(76, 234, 255, .3); }
+  .btn.ghost { background: rgba(76, 234, 255, .04); color: var(--cyan); border-color: rgba(76, 234, 255, .35); box-shadow: none; }
+  .btn.ghost:hover { color: var(--bright); border-color: var(--cyan); background: rgba(76, 234, 255, .1); }
+  .btn small { font-weight: normal; opacity: .8; }
 
   /* terminal de demonstração */
-  .term { border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel2), var(--panel)); box-shadow: 0 30px 80px rgba(0, 0, 0, .5), var(--glow-m);
-          font-size: 13.5px; position: relative; }
-  .term .bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  .term .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .term { border: 1px solid rgba(168, 139, 255, .3); border-radius: 14px; overflow: hidden;
+          background: linear-gradient(180deg, var(--panel2), var(--panel));
+          box-shadow: 0 28px 70px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 69, 166, .06), 0 0 50px rgba(255, 69, 166, .09);
+          font-size: 13px; position: relative; }
+  .term::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; pointer-events: none;
+                  background: linear-gradient(90deg, transparent, var(--magenta), var(--cyan), transparent); opacity: .75; }
+  .term .bar { display: flex; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid rgba(126, 126, 190, .18);
+               background: rgba(255, 255, 255, .015); }
+  .term .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
   .term .bar i:nth-child(1) { background: var(--magenta); } .term .bar i:nth-child(2) { background: var(--yellow); } .term .bar i:nth-child(3) { background: var(--green); }
-  .term .bar span { margin-left: 8px; color: var(--dim); font-size: 12px; }
+  .term .bar span { margin-left: 8px; color: var(--dim); font-size: 11.5px; }
   .term .bar button { margin-left: auto; }
-  .term .body { padding: 14px 14px 10px; min-height: 274px; }
+  .term .body { padding: 16px 16px 12px; min-height: 274px; }
   .term .ln { display: grid; grid-template-columns: 44px 72px 1fr; gap: 8px; white-space: pre-wrap; overflow-wrap: anywhere;
               animation: in .25s ease-out; }
   @keyframes in { from { opacity: 0; transform: translateY(4px); } }
   .term .t { color: var(--dim); } .term .n { text-align: right; font-weight: bold; }
   .term .sys { color: var(--violet); grid-column: 2 / 4; }
-  .term .x { color: var(--text); } .term.server .x { color: var(--green); }
-  .term .meta { color: var(--dim); font-size: 12px; border-top: 1px dashed var(--line); padding: 6px 14px; display: flex; justify-content: space-between; gap: 8px; }
-  .toggle { font: inherit; font-size: 12px; color: var(--cyan); background: transparent; border: 1px solid var(--line); padding: 2px 10px; cursor: pointer; }
-  .toggle[aria-pressed="true"] { color: var(--bg); background: var(--green); border-color: var(--green); }
+  .term .x { color: var(--bright); } .term.server .x { color: var(--green); }
+  .term .meta { color: var(--dim); font-size: 11.5px; border-top: 1px solid rgba(126, 126, 190, .16); padding: 8px 16px;
+                display: flex; justify-content: space-between; gap: 8px; background: rgba(0, 0, 0, .16); }
+  .toggle { font: inherit; font-size: 11.5px; color: var(--cyan); background: rgba(76, 234, 255, .06);
+            border: 1px solid rgba(76, 234, 255, .3); border-radius: 999px; padding: 5px 11px; cursor: pointer;
+            transition: background .15s, color .15s; }
+  .toggle:hover { background: rgba(76, 234, 255, .14); }
+  .toggle[aria-pressed="true"] { color: #04160d; background: var(--green); border-color: var(--green); }
 
   /* seções */
-  section { margin-top: 72px; }
-  h2 { font-size: clamp(20px, 3vw, 26px); margin: 0 0 6px; letter-spacing: .02em; display: flex; gap: 12px; align-items: baseline; }
-  h2 .k { color: var(--magenta); font-size: 14px; border: 1px solid var(--magenta); padding: 0 8px; }
-  h2 .w { color: var(--yellow); }
-  .sub { color: var(--dim); margin: 0 0 20px; }
-  p { margin: 8px 0; }
+  section { margin-top: 88px; }
+  h2 { font-size: clamp(21px, 3vw, 27px); margin: 0 0 10px; letter-spacing: -.015em; display: flex; gap: 13px; align-items: center; }
+  h2 .k { color: var(--magenta); font-size: 12.5px; border: 1px solid rgba(255, 69, 166, .45); border-radius: 6px;
+          padding: 4px 9px; background: rgba(255, 69, 166, .07); white-space: nowrap; }
+  h2 .w { color: var(--bright); }
+  .sub { color: var(--dim); margin: 0 0 24px; font-size: 15.5px; }
+  p { margin: 10px 0; }
   .dim { color: var(--dim); }
-  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s, transform .6s; }
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity .6s, transform .6s; }
   .reveal.seen { opacity: 1; transform: none; }
 
   /* downloads */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-  .dl { position: relative; display: block; padding: 18px; text-decoration: none; color: var(--text); background: var(--panel);
-        border: 1px solid var(--line); overflow: hidden; transition: transform .15s, border-color .15s; }
+  .dl { position: relative; display: block; padding: 20px; min-height: 158px; text-decoration: none; color: var(--text);
+        background: linear-gradient(160deg, rgba(25, 25, 48, .95), rgba(18, 18, 33, .95));
+        border: 1px solid rgba(126, 126, 190, .22); border-radius: var(--r);
+        overflow: hidden; transition: transform .18s, border-color .18s, box-shadow .18s; }
   .dl::before { content: ""; position: absolute; inset: 0; opacity: 0; transition: opacity .2s;
-                background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(60, 240, 255, .18), transparent 60%); }
-  .dl:hover, .dl:focus-visible { transform: translateY(-3px); border-color: var(--cyan); outline: none; color: var(--text); text-shadow: none; }
+                background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 50%), rgba(76, 234, 255, .16), transparent 60%); }
+  .dl::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: 0; height: 2px; opacity: .35;
+               background: linear-gradient(90deg, var(--cyan), transparent); }
+  .dl:hover, .dl:focus-visible { transform: translateY(-4px); border-color: rgba(76, 234, 255, .7); outline: none;
+        color: var(--text); text-shadow: none; box-shadow: 0 16px 36px rgba(0, 0, 0, .35), var(--glow-c); }
   .dl:hover::before, .dl:focus-visible::before { opacity: 1; }
-  .dl .os { font-size: 26px; line-height: 1; color: var(--cyan); }
-  .dl b { display: block; font-size: 17px; margin-top: 10px; }
-  .dl small { color: var(--dim); display: block; overflow-wrap: anywhere; }
-  .dl .go { position: absolute; right: 14px; top: 16px; color: var(--dim); transition: transform .15s, color .15s; }
+  .dl .os { display: grid; place-items: center; width: 46px; height: 46px; font-size: 23px; line-height: 1; color: var(--cyan);
+            background: rgba(76, 234, 255, .08); border: 1px solid rgba(76, 234, 255, .25); border-radius: 12px; }
+  .dl b { display: block; font-size: 15px; margin-top: 14px; color: var(--bright); font-family: var(--mono); }
+  .dl small { color: var(--dim); display: block; margin-top: 3px; font-size: 11.5px; overflow-wrap: anywhere; }
+  .dl .go { position: absolute; right: 16px; top: 17px; color: var(--dim); font-size: 18px; transition: transform .15s, color .15s; }
   .dl:hover .go { transform: translateY(3px); color: var(--cyan); }
-  .dl .badge { display: none; margin-top: 10px; font-size: 12px; color: var(--bg); background: var(--magenta); padding: 1px 8px; width: max-content; }
-  .dl.mine { border-color: var(--magenta); box-shadow: var(--glow-m); }
+  .dl .badge { display: none; margin-top: 12px; font-size: 10.5px; letter-spacing: .02em; color: #1a0712;
+               background: var(--magenta); border-radius: 999px; padding: 3px 9px; width: max-content; }
+  .dl.mine { border-color: rgba(255, 69, 166, .65); box-shadow: var(--glow-m); }
+  .dl.mine::after { background: linear-gradient(90deg, var(--magenta), transparent); opacity: .8; }
   .dl.mine .badge { display: block; }
 
-  pre { position: relative; background: #05050b; border: 1px solid var(--line); padding: 16px 18px; margin: 12px 0;
-        overflow-x: auto; white-space: pre; font-size: 13.5px; line-height: 1.55; }
-  pre::before { content: "$"; position: absolute; left: 6px; top: 16px; color: var(--magenta); opacity: .6; font-size: 12px; }
-  pre code { color: var(--text); }
+  pre { position: relative; background: linear-gradient(180deg, #0a0a14, #06060d); border: 1px solid rgba(126, 126, 190, .22);
+        border-radius: var(--r-sm); padding: 18px 20px; margin: 14px 0;
+        overflow-x: auto; white-space: pre; font-size: 13px; line-height: 1.6; }
+  pre::before { content: "$"; position: absolute; left: 7px; top: 18px; color: var(--magenta); opacity: .7; font-size: 12px; }
+  pre code { color: var(--bright); }
   .c { color: var(--dim); }
-  .copy { position: absolute; top: 8px; right: 8px; background: var(--panel2); color: var(--cyan); border: 1px solid var(--line);
-          font: inherit; font-size: 12px; padding: 2px 10px; cursor: pointer; }
-  .copy:hover { border-color: var(--cyan); }
-  .copy.ok { color: var(--bg); background: var(--green); border-color: var(--green); }
+  .copy { position: absolute; top: 10px; right: 10px; background: rgba(25, 25, 48, .95); color: var(--cyan);
+          border: 1px solid rgba(76, 234, 255, .28); border-radius: 6px; font: inherit; font-size: 11px;
+          padding: 4px 10px; cursor: pointer; transition: background .15s, border-color .15s; }
+  .copy:hover { border-color: var(--cyan); background: rgba(76, 234, 255, .12); }
+  .copy.ok { color: #04160d; background: var(--green); border-color: var(--green); }
 
-  .box { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cyan); padding: 14px 18px; margin: 14px 0; }
-  .warn { border-left-color: var(--orange); }
-  .box.warn { border-left-color: var(--orange); background: linear-gradient(rgba(255, 170, 51, .06), rgba(255, 170, 51, .06)), var(--panel); }
+  .box { background: linear-gradient(100deg, rgba(76, 234, 255, .04), transparent 60%), var(--panel);
+         border: 1px solid rgba(126, 126, 190, .2); border-left: 3px solid var(--cyan); border-radius: var(--r-sm);
+         padding: 16px 20px; margin: 16px 0; }
+  .box.warn { border-left-color: var(--orange); background: linear-gradient(100deg, rgba(255, 180, 84, .07), transparent 60%), var(--panel); }
   .box ul { margin: 8px 0; padding-left: 20px; }
   .warn strong { color: var(--orange); }
-  .fp { color: var(--green); overflow-wrap: anywhere; word-break: break-all; }
-  ol, ul { padding-left: 22px; } li { margin: 5px 0; }
+  .fp { color: var(--green); overflow-wrap: anywhere; word-break: break-all; font-size: 13px; }
+  ol, ul { padding-left: 22px; } li { margin: 6px 0; }
 
   /* abas */
-  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
-  .tabs button { font: inherit; font-size: 14px; color: var(--dim); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; cursor: pointer; }
-  .tabs button[aria-selected="true"] { color: var(--bg); background: var(--cyan); border-color: var(--cyan); box-shadow: var(--glow-c); }
-  .pane { border: 1px solid var(--line); border-top: 2px solid var(--cyan); padding: 4px 18px 12px; background: rgba(17, 17, 31, .7); }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .tabs button { font: inherit; font-size: 12.5px; color: var(--dim); background: var(--panel); border: 1px solid rgba(126, 126, 190, .24);
+                 border-radius: var(--r-sm); padding: 8px 14px; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+  .tabs button:hover { color: var(--bright); border-color: rgba(76, 234, 255, .5); }
+  .tabs button[aria-selected="true"] { color: #04121a; background: linear-gradient(135deg, var(--cyan), #7ef0df);
+                                       border-color: var(--cyan); box-shadow: var(--glow-c); }
+  .pane { border: 1px solid rgba(126, 126, 190, .2); border-top: 2px solid var(--cyan); border-radius: 0 0 var(--r-sm) var(--r-sm);
+          padding: 6px 20px 14px; background: rgba(18, 18, 33, .75); }
   .pane[hidden] { display: none; }
 
   /* passos */
   .steps { counter-reset: s; list-style: none; padding: 0; display: grid; gap: 12px; }
-  .steps > li { counter-increment: s; position: relative; padding: 12px 16px 12px 58px; background: var(--panel); border: 1px solid var(--line); }
-  .steps > li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 14px; top: 12px; color: var(--magenta); font-weight: bold; }
+  .steps > li { counter-increment: s; position: relative; padding: 16px 18px 16px 64px; background: var(--panel);
+                border: 1px solid rgba(126, 126, 190, .2); border-radius: var(--r-sm); }
+  .steps > li::before { content: counter(s, decimal-leading-zero); position: absolute; left: 16px; top: 15px;
+                        display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
+                        color: var(--magenta); font: 700 12px var(--mono);
+                        background: rgba(255, 69, 166, .08); border: 1px solid rgba(255, 69, 166, .3); }
+
+  /* guias (navegador e conexão) */
+  .web-head, .con-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .web-head .sub, .con-head .sub { margin-bottom: 0; }
+  .web-head .btn { flex: 0 0 auto; }
+  .web-label, .con-label { display: flex; align-items: baseline; gap: 10px; margin: 26px 0 12px; font: 700 12px var(--mono);
+               letter-spacing: .08em; text-transform: uppercase; color: var(--bright); }
+  .web-label::after, .con-label::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(126, 126, 190, .35), transparent); }
+  .web-label span, .con-label span { order: 3; font-weight: 400; font-size: 10.5px; letter-spacing: .02em; text-transform: none;
+                    color: var(--dim); border: 1px solid rgba(126, 126, 190, .25); border-radius: 999px; padding: 2px 8px; }
+  .web-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); counter-reset: s; }
+  .web-steps > li { padding: 62px 18px 18px; min-height: 186px; font-size: 14px; }
+  .web-steps > li::before { left: 18px; top: 16px; width: 32px; height: 32px; font-size: 11px; }
+  .web-steps > li:not(:last-child)::after, .con-steps > li:not(:last-child)::after { content: "→"; position: absolute;
+        right: -15px; top: 50%; z-index: 2; display: grid; place-items: center; width: 24px; height: 24px; margin-top: -12px;
+        border-radius: 50%; color: var(--cyan); background: var(--bg2); border: 1px solid rgba(76, 234, 255, .3); font: 13px var(--mono); }
+  .web-compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px; align-items: start; }
+  .web-col { border: 1px solid rgba(126, 126, 190, .2); border-radius: var(--r); padding: 20px;
+             background: linear-gradient(160deg, rgba(25, 25, 48, .85), rgba(18, 18, 33, .95)); }
+  .web-col.same { border-left: 3px solid var(--cyan); }
+  .web-col.diff { border-left: 3px solid var(--orange);
+                  background: linear-gradient(130deg, rgba(255, 180, 84, .06), transparent 55%), var(--panel); }
+  .web-col h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font: 700 13px var(--mono);
+                color: var(--bright); }
+  .sigil { display: grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
+           font-size: 14px; font-weight: bold; }
+  .same .sigil { color: #04160d; background: var(--green); }
+  .diff .sigil { color: #241203; background: var(--orange); }
+  .web-col p, .web-col li { color: var(--dim); font-size: 14px; }
+  .web-col p { margin: 0; }
+  .web-col ul { margin: 12px 0 0; padding-left: 20px; }
+  .web-col li { margin: 8px 0; }
+  .same ul { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+  .same li { position: relative; margin: 0; padding-left: 26px; }
+  .same li::before { content: "✓"; position: absolute; left: 0; top: 1px; color: var(--green); font-weight: bold; }
+  .diff li::marker { color: var(--orange); }
+  .web-hint { margin-top: 14px !important; padding-top: 13px; border-top: 1px dashed rgba(126, 126, 190, .25); }
+
+  /* guia de conexão */
+  .con-chip { flex: 0 0 auto; font: 11px var(--mono); color: var(--cyan); background: rgba(76, 234, 255, .06);
+              border: 1px solid rgba(76, 234, 255, .3); border-radius: 999px; padding: 6px 11px; white-space: nowrap; }
+  .con-start { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; margin-top: 20px; }
+  .con-command, .con-pin { position: relative; min-width: 0; border: 1px solid rgba(126, 126, 190, .22); border-radius: var(--r);
+                           padding: 18px; background: linear-gradient(160deg, rgba(25, 25, 48, .9), rgba(18, 18, 33, .95)); }
+  .con-command::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; border-radius: var(--r) var(--r) 0 0;
+                         background: linear-gradient(90deg, var(--cyan), transparent); }
+  .con-pin { border-left: 3px solid var(--cyan); }
+  .con-cap { display: block; margin-bottom: 10px; font: 700 10.5px var(--mono); letter-spacing: .1em;
+             text-transform: uppercase; color: var(--dim); }
+  .con-command pre { margin: 0 0 12px; font-size: 12.5px; }
+  .con-command .dim { font-size: 12.5px; }
+  .con-pin-label { color: var(--dim); font-size: 13px; margin: 0 0 6px; }
+  .con-pin .fp { margin: 0 0 12px; font-size: 11.5px; line-height: 1.6; }
+  .con-pin .dim { font-size: 13px; margin: 0; }
+  .con-label { margin-top: 34px; }
+  .con-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .con-steps > li { padding: 62px 16px 16px; min-height: 214px; font-size: 13.5px; }
+  .con-steps > li::before { left: 16px; top: 16px; width: 32px; height: 32px; font-size: 11px; }
+  .con-updates { margin-top: 38px; padding: 22px; border: 1px solid rgba(126, 126, 190, .2); border-radius: var(--r);
+                 background: linear-gradient(160deg, rgba(25, 25, 48, .8), rgba(18, 18, 33, .95)); }
+  .con-updates-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .con-updates-head h2 { margin-bottom: 12px; }
+  .con-updates > p { max-width: 86ch; color: var(--dim); font-size: 14.5px; }
+  .con-updates .box.warn { margin-bottom: 0; }
 
   /* novidades */
   .feat { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--line); padding: 18px; position: relative; transition: border-color .2s, transform .2s; }
-  .card:hover { border-color: var(--violet); transform: translateY(-2px); }
-  .card .v { position: absolute; top: 14px; right: 14px; font-size: 11px; color: var(--violet); border: 1px solid var(--violet); padding: 0 6px; }
-  .card h3 { margin: 0 0 6px; font-size: 16px; color: var(--cyan); padding-right: 54px; }
-  .card p { color: #c4c4dd; font-size: 14px; }
-  .card details { margin-top: 8px; font-size: 13.5px; }
+  .card { background: linear-gradient(160deg, rgba(25, 25, 48, .9), rgba(18, 18, 33, .95)); border: 1px solid rgba(126, 126, 190, .2);
+          border-radius: var(--r); padding: 20px; position: relative; transition: border-color .2s, transform .2s, box-shadow .2s; }
+  .card::before { content: ""; position: absolute; left: 20px; right: 20px; top: 0; height: 2px; opacity: 0;
+                  background: linear-gradient(90deg, var(--violet), transparent); transition: opacity .2s; }
+  .card:hover { border-color: rgba(168, 139, 255, .6); transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0, 0, 0, .3); }
+  .card:hover::before { opacity: 1; }
+  .card .v { position: absolute; top: 15px; right: 15px; font-size: 10.5px; color: var(--violet); border: 1px solid rgba(168, 139, 255, .45);
+             background: rgba(168, 139, 255, .08); border-radius: 999px; padding: 2px 8px; }
+  .card h3 { margin: 0 0 8px; font-size: 15px; color: var(--cyan); padding-right: 58px; }
+  .card p { color: var(--dim); font-size: 14px; }
+  .card details { margin-top: 10px; font-size: 13px; }
   .card summary { cursor: pointer; color: var(--yellow); list-style: none; }
   .card summary::-webkit-details-marker { display: none; }
   .card summary::before { content: "+ "; color: var(--magenta); }
@@ -173,34 +291,58 @@
   .k2 { color: var(--green); }
 
   /* laboratório */
-  .lab { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .lab textarea { width: 100%; min-height: 118px; resize: vertical; background: #05050b; color: var(--text); border: 1px solid var(--line);
-                  font: inherit; font-size: 14px; padding: 12px; }
+  .lab { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .lab > div { background: var(--panel); border: 1px solid rgba(126, 126, 190, .2); border-radius: var(--r); padding: 18px; }
+  .lab textarea { width: 100%; min-height: 118px; resize: vertical; background: #080810; color: var(--bright);
+                  border: 1px solid rgba(126, 126, 190, .28); border-radius: var(--r-sm); font: inherit; font-size: 14px; padding: 12px; }
   .lab textarea:focus { outline: none; border-color: var(--cyan); box-shadow: var(--glow-c); }
-  .meter { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 10px 0 4px; }
-  .meter span { height: 10px; background: var(--line); transition: background .2s, box-shadow .2s; }
+  .meter { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 12px 0 4px; }
+  .meter span { height: 10px; border-radius: 3px; background: var(--line); transition: background .2s, box-shadow .2s; }
   .meter span.on { background: var(--magenta); box-shadow: var(--glow-m); }
   .meter + .scale { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; font-size: 10px; color: var(--dim); text-align: center; }
-  .hex { font-size: 11.5px; line-height: 1.5; color: var(--green); background: #05050b; border: 1px solid var(--line); padding: 10px; height: 150px;
+  .hex { font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--green); background: #080810;
+         border: 1px solid rgba(126, 126, 190, .24); border-radius: var(--r-sm); padding: 10px; height: 150px;
          overflow: hidden; word-break: break-all; position: relative; }
-  .hex::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, #05050b); }
-  .stat { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; border-bottom: 1px dashed var(--line); padding: 4px 0; }
-  .stat b { color: var(--cyan); }
+  .hex::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(transparent, #080810); }
+  .stat { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; border-bottom: 1px dashed rgba(126, 126, 190, .2); padding: 7px 0; }
+  .stat b { color: var(--cyan); text-align: right; }
 
   /* tabela de comandos */
-  .search { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); font: inherit; padding: 10px 14px; }
+  .search { width: 100%; background: var(--panel); color: var(--bright); border: 1px solid rgba(126, 126, 190, .26);
+            border-radius: var(--r-sm); font: inherit; font-size: 14px; padding: 12px 16px; }
+  .search::placeholder { color: var(--dim); }
   .search:focus { outline: none; border-color: var(--cyan); box-shadow: var(--glow-c); }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
-  td { border-bottom: 1px solid var(--line); padding: 8px; vertical-align: top; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; margin-top: 14px;
+          border: 1px solid rgba(126, 126, 190, .2); border-radius: var(--r-sm); overflow: hidden; }
+  td { border-bottom: 1px solid rgba(126, 126, 190, .16); padding: 10px 14px; vertical-align: top; }
+  tbody tr:last-child td, tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: rgba(76, 234, 255, .035); }
   td:first-child { color: var(--cyan); white-space: nowrap; }
-  tr.new td:first-child::after { content: " novo"; color: var(--bg); background: var(--violet); font-size: 10px; padding: 0 4px; margin-left: 6px; vertical-align: 2px; }
+  tr.new td:first-child::after { content: " novo"; color: #180a24; background: var(--violet); border-radius: 999px;
+                                  font-size: 9.5px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
   tr[hidden] { display: none; }
   .none { color: var(--dim); padding: 8px; }
 
-  footer { margin-top: 72px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+  footer { margin-top: 88px; color: var(--dim); font-size: 13px; border-top: 1px solid rgba(126, 126, 190, .2);
+           padding-top: 22px; max-width: 78ch; }
 
-  @media (max-width: 820px) { .hero, .lab { grid-template-columns: 1fr; } .hero { padding-top: 32px; } }
-  @media (max-width: 520px) { td:first-child { white-space: normal; } .term { font-size: 12px; } .term .ln { grid-template-columns: 42px 56px 1fr; gap: 6px; } .term .bar span { font-size: 11px; } }
+  @media (max-width: 820px) {
+    .hero, .lab, .web-compare, .con-start { grid-template-columns: 1fr; }
+    .hero { padding-top: 36px; gap: 28px; } .wrap { padding-inline: 18px; }
+    .web-steps, .con-steps { grid-template-columns: 1fr; }
+    .web-steps > li:not(:last-child)::after, .con-steps > li:not(:last-child)::after { display: none; }
+    .web-head .btn { width: 100%; }
+    .con-chip { align-self: flex-start; }
+  }
+  @media (max-width: 520px) { td:first-child { white-space: normal; } .term { font-size: 12px; }
+    .term .ln { grid-template-columns: 42px 56px 1fr; gap: 6px; } .term .bar span { font-size: 11px; }
+    h1 { letter-spacing: -.02em; } h1 .b { width: auto; } .cta .btn { flex: 1 1 100%; }
+    .dl { min-height: 0; } .steps > li { padding-left: 56px; } .steps > li::before { left: 12px; width: 30px; height: 30px; font-size: 10px; }
+    .web-steps > li, .con-steps > li { min-height: 0; padding: 14px 16px 14px 62px; }
+    .web-steps > li::before, .con-steps > li::before { left: 13px; top: 14px; width: 30px; height: 30px; font-size: 10px; }
+    .web-label, .con-label { letter-spacing: .04em; }
+    .con-updates { padding: 18px 16px; }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
     html { scroll-behavior: auto; } .reveal { opacity: 1; transform: none; }
@@ -208,6 +350,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#topo">pular para o conteúdo</a>
 <div class="bg" aria-hidden="true"></div><div class="scan" aria-hidden="true"></div>
 
 <nav class="top" aria-label="Seções">
@@ -222,6 +365,7 @@
       <li><a href="#laboratorio">o que o servidor vê</a></li>
       <li><a href="#comandos">comandos</a></li>
       <li><a href="#codigo">código</a></li>
+      <li><a href="#privacidade">privacidade</a></li>
     </ul>
   </div>
   <div class="progress" id="progress"></div>
@@ -353,15 +497,30 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
 </section>
 
 <section id="conectar" class="reveal">
-  <h2><span class="k">03</span><span class="w">conecte</span></h2>
-  <p class="sub">O <code>--pin</code> amarra o cliente a este servidor desde a primeira conexão.</p>
-<pre><code>./crptochat-linux-amd64 crptochat.acpt.app.br --pin __PIN__</code></pre>
-  <p>No Windows: <code>.\crptochat-windows-amd64.exe crptochat.acpt.app.br --pin __PIN__</code></p>
-  <div class="box">
-    <p><span class="dim">fingerprint do certificado do servidor (o <code>--pin</code>):</span><br><span class="fp">__PIN__</span></p>
-    <p class="dim">Com o <code>--pin</code>, o cliente recusa qualquer servidor que não seja este, já na primeira conexão.</p>
+  <div class="con-head">
+    <div>
+      <h2><span class="k">03</span><span class="w">conecte</span></h2>
+      <p class="sub">O <code>--pin</code> amarra o cliente a este servidor desde a primeira conexão.</p>
+    </div>
+    <span class="con-chip">◈ servidor fixado na 1ª conexão</span>
   </div>
-  <ol class="steps">
+
+  <div class="con-start">
+    <div class="con-command">
+      <span class="con-cap">linux / macOS</span>
+<pre><code>./crptochat-linux-amd64 crptochat.acpt.app.br --pin __PIN__</code></pre>
+      <p class="dim">No Windows: <code>.\crptochat-windows-amd64.exe crptochat.acpt.app.br --pin __PIN__</code></p>
+    </div>
+    <div class="con-pin">
+      <span class="con-cap">pin do servidor</span>
+      <p class="con-pin-label">fingerprint do certificado (o <code>--pin</code>):</p>
+      <p class="fp">__PIN__</p>
+      <p class="dim">Com o <code>--pin</code>, o cliente recusa qualquer servidor que não seja este, já na primeira conexão.</p>
+    </div>
+  </div>
+
+  <h3 class="con-label">primeiros passos <span>4 etapas</span></h3>
+  <ol class="steps con-steps">
     <li>Na primeira vez, escolha um <b>nick</b> e uma <b>senha</b>. A senha protege a sua chave neste computador e
         nunca vai ao servidor. O nick fica preso à sua chave: <b>sem a chave, ninguém (nem você) recupera o nick</b>.</li>
     <li>Sem cadastro: <code>crptochat crptochat.acpt.app.br -a</code> entra como anônimo, com um nick descartável
@@ -370,24 +529,35 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
     <li>Com quem importa, confira o número de segurança: <code>/whois nick</code> e depois <code>/verify nick</code>.</li>
   </ol>
 
-  <h2 style="margin-top:40px"><span class="k">↻</span><span class="w">atualizações</span></h2>
-  <p>O cliente procura versão nova sozinho (ao conectar e a cada 6 horas) e <b>pergunta</b> se você quer
-     atualizar; <code>/update</code> faz o mesmo na hora. Desde a 1.18 ele busca a <b>última release do GitHub</b>
-     e, se o GitHub não responder ou limitar as consultas, usa <b>este site</b>. Só instala uma release
-     <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
-     reinstala a mesma), e confere o SHA-256 do binário contra o manifesto assinado antes de trocar.
-     Não precisa de conta nem de login, e nenhum token é enviado.</p>
-  <div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
-     e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.
-     <b>No macOS com a 1.16 ou anterior</b>, o <code>/update</code> falha na validação do certificado: baixe a versão
-     nova uma vez pelo passo 1.</div>
+  <div class="con-updates">
+    <div class="con-updates-head">
+      <h2><span class="k">↻</span><span class="w">atualizações</span></h2>
+      <span class="con-chip">sem conta · sem token</span>
+    </div>
+    <p>O cliente procura versão nova sozinho (ao conectar e a cada 6 horas) e <b>pergunta</b> se você quer
+       atualizar; <code>/update</code> faz o mesmo na hora. Desde a 1.18 ele busca a <b>última release do GitHub</b>
+       e, se o GitHub não responder ou limitar as consultas, usa <b>este site</b>. Só instala uma release
+       <b>assinada</b> com a chave acima e de <b>versão maior</b> que a sua (nunca volta para uma mais antiga, nem
+       reinstala a mesma), e confere o SHA-256 do binário contra o manifesto assinado antes de trocar.
+       Não precisa de conta nem de login, e nenhum token é enviado.</p>
+    <div class="box warn"><strong>Tem a 1.9.0 ou anterior?</strong> Essas versões procuram atualização em outro lugar
+       e não vão achar. Baixe a versão nova aqui uma vez (passos 1 e 2); daí em diante o <code>/update</code> funciona.
+       <b>No macOS com a 1.16 ou anterior</b>, o <code>/update</code> falha na validação do certificado: baixe a versão
+       nova uma vez pelo passo 1.</div>
+  </div>
 </section>
 
 <section id="web" class="reveal">
-  <h2><span class="k">▶</span><span class="w">ou use no navegador</span></h2>
-  <p class="sub">Sem instalar nada, no computador ou no celular: o mesmo cliente, rodando dentro da página.</p>
-  <p><a class="btn ghost" href="/web/">▶ abrir o crptochat no navegador</a></p>
-  <ol class="steps">
+  <div class="web-head">
+    <div>
+      <h2><span class="k">▶</span><span class="w">ou use no navegador</span></h2>
+      <p class="sub">Sem instalar nada, no computador ou no celular: o mesmo cliente, rodando dentro da página.</p>
+    </div>
+    <a class="btn ghost" href="/web/">▶ abrir o crptochat no navegador</a>
+  </div>
+
+  <h3 class="web-label">como começar <span>3 passos</span></h3>
+  <ol class="steps web-steps">
     <li>Abra <a href="/web/"><code>/web/</code></a> neste mesmo site. Na primeira visita a página baixa o cliente
         (uns 15 MB); das próximas vezes ela abre do que ficou guardado no navegador.</li>
     <li>Entre com o seu <b>nick</b> e a sua <b>senha</b>. Já tem conta no terminal? Importe a mesma identidade: o
@@ -396,26 +566,35 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
     <li>Criou a chave no navegador? Faça o <b>backup</b> que a página pede: a chave fica só naquele navegador, e
         limpar os dados do site (o Safari do iPhone pode fazer isso sozinho) apaga ela.</li>
   </ol>
-  <div class="box">
-    <p><b>O que continua igual:</b> a chave é decifrada só no seu navegador e a senha nunca vai ao servidor. As
-       mensagens saem cifradas de ponta a ponta, como no terminal. A página fala com o servidor por WebSocket em
-       <code>/ws</code> (a entrada WebGate do servidor), e o servidor continua só repassando blobs cifrados.</p>
-  </div>
-  <div class="box warn">
-    <p><strong>O que muda: em quem você confia.</strong> No terminal você confere a assinatura do binário uma vez, e
-       o <code>--pin</code> recusa qualquer servidor que não seja este. No navegador não há como fazer nenhum dos dois:</p>
-    <ul>
-      <li>O código do cliente vem <b>deste site</b>, por HTTPS, a cada versão. Quem controlar o site (ou o
-          servidor que o entrega) poderia entregar uma página alterada, que leria a sua senha. Não há assinatura que
-          o navegador confira antes de rodar.</li>
-      <li>A conexão <code>wss://</code> é validada só pelas autoridades certificadoras do navegador, sem
-          <code>--pin</code>. Quem obtivesse um certificado válido para o domínio poderia ver os metadados da
-          conexão; o conteúdo continua cifrado de ponta a ponta.</li>
-      <li>Ainda é <b>beta</b>: sem a camada pós-quântica (fica só o X25519), sem mensagens de voz e sem
-          transferência direta de arquivos.</li>
-    </ul>
-    <p>Para conversas em que isso pesa, use o <a href="#baixar">cliente de terminal</a> com a assinatura conferida e o
-       <code>--pin</code>.</p>
+
+  <h3 class="web-label">o que muda na prática <span>terminal × navegador</span></h3>
+  <div class="web-compare">
+    <article class="web-col same">
+      <h3><span class="sigil">✓</span> o que continua igual</h3>
+      <ul>
+        <li>A chave é decifrada só no seu navegador e a senha nunca vai ao servidor.</li>
+        <li>As mensagens saem cifradas de ponta a ponta, como no terminal.</li>
+        <li>A página fala com o servidor por WebSocket em <code>/ws</code> (a entrada WebGate do servidor), e o
+            servidor continua só repassando blobs cifrados.</li>
+      </ul>
+    </article>
+    <article class="web-col diff">
+      <h3><span class="sigil">!</span> o que muda: em quem você confia</h3>
+      <p>No terminal você confere a assinatura do binário uma vez, e o <code>--pin</code> recusa qualquer servidor que
+         não seja este. No navegador não há como fazer nenhum dos dois:</p>
+      <ul>
+        <li>O código do cliente vem <b>deste site</b>, por HTTPS, a cada versão. Quem controlar o site (ou o
+            servidor que o entrega) poderia entregar uma página alterada, que leria a sua senha. Não há assinatura que
+            o navegador confira antes de rodar.</li>
+        <li>A conexão <code>wss://</code> é validada só pelas autoridades certificadoras do navegador, sem
+            <code>--pin</code>. Quem obtivesse um certificado válido para o domínio poderia ver os metadados da
+            conexão; o conteúdo continua cifrado de ponta a ponta.</li>
+        <li>Ainda é <b>beta</b>: sem a camada pós-quântica (fica só o X25519), sem mensagens de voz e sem
+            transferência direta de arquivos.</li>
+      </ul>
+      <p class="web-hint">Para conversas em que isso pesa, use o <a href="#baixar">cliente de terminal</a> com a
+         assinatura conferida e o <code>--pin</code>.</p>
+    </article>
   </div>
 </section>
 
@@ -550,12 +729,50 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
      expõe o problema a todo mundo antes de existir correção.</div>
 </section>
 
+<section id="privacidade" class="reveal">
+  <h2><span class="k">§</span><span class="w">privacidade</span></h2>
+  <p class="sub">O resumo; a política completa está no repositório.</p>
+  <div class="grid">
+    <div class="card">
+      <h3>Esta página</h3>
+      <p>Estática: sem cookies, analytics, fontes ou scripts de terceiros. O provedor da hospedagem pode registrar
+         requisições HTTP comuns (endereço IP, horário, arquivo pedido).</p>
+    </div>
+    <div class="card">
+      <h3>Seu dispositivo</h3>
+      <p>A chave do nick nasce e fica cifrada com a sua senha no seu computador, pendrive ou cofre. O servidor
+         recebe o nick, a chave pública e a versão do cliente.</p>
+    </div>
+    <div class="card">
+      <h3>O servidor</h3>
+      <p>Não lê mensagens, mas vê metadados: quem, quando, canal, faixa de tamanho e o IP da conexão. Em disco:
+         nicks, chaves públicas, cargos e bans, histórico cifrado (com autor e horário em claro), recados fixados
+         em texto claro e envelopes cifrados. O IP vira hash, não texto — mas a chave do hash está no próprio
+         banco: é pseudonimização, não anonimização.</p>
+    </div>
+    <div class="card">
+      <h3>Navegador</h3>
+      <p>Chaves e preferências ficam no IndexedDB; o service worker guarda os arquivos do build. Conexão por
+         <code>wss://</code>, sem rastreamento. Limpar os dados do site apaga também as chaves: faça backup.</p>
+    </div>
+  </div>
+  <div class="box warn"><strong>Fora do crptochat:</strong> o GitHub (downloads e atualizações), a hospedagem do
+     site e proxies como Caddy/nginx na frente do servidor veem o IP e podem ter logs próprios. Quem precisa
+     esconder o IP use Tor ou VPN. Cada servidor é responsabilidade de quem o opera; o projeto não coleta nem
+     acessa esses dados.</div>
+  <p>As exceções e os limites — P2P (mostra seu IP ao destinatário), histórico cifrado de canal, mensagens offline,
+     atualizações e anônimos — estão na
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/PRIVACIDADE.md">política de privacidade completa</a>.</p>
+</section>
+
 <footer>
-  <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e a faixa de tamanho
+  <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando, o IP da conexão e a faixa de tamanho
      das mensagens) e, enquanto um recado offline espera, que alguém deixou algo para aquele nick. Print de tela e
      cliente adulterado não têm como ser impedidos. O código ainda não passou por auditoria independente, mas é
      aberto: revise e reporte o que encontrar.</p>
   <p>Esta página não carrega nada de fora, não tem rastreamento nem analytics.</p>
+  <p><a href="#privacidade">Resumo de privacidade</a> ·
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/PRIVACIDADE.md">política completa</a>.</p>
 </footer>
 </div>
 

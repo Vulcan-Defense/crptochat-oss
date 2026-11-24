@@ -15,6 +15,9 @@ consegue ler as conversas e, por padrão, não guarda histórico nenhum.
 - **Arquivos** cifrados de ponta a ponta, repassados pelo servidor sem gravar nada (ou direto, P2P, com `--p2p`).
 - **TUI cyberpunk**: janelas, contador de não lidas, menções, Tab-completion, histórico, mouse.
 
+Privacidade: [PRIVACIDADE.md](PRIVACIDADE.md) descreve o que o site, o cliente e o
+servidor guardam — e o que não guardam.
+
 ## Instalação
 
 Para quem só quer usar: a página `site/downloads/index.html` é o anúncio público com os binários, a conferência
