@@ -8,3 +8,4 @@ crptochat-data/
 crptochat/_build.py
 web/vendor/
 web/node_modules/
+web/dist-dev/
