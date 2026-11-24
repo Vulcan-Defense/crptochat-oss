@@ -14,8 +14,6 @@ consegue ler as conversas e, por padrão, não guarda histórico nenhum.
 - **Mensagens de voz** cifradas ponta a ponta, em canais e diretas.
 - **Arquivos** cifrados de ponta a ponta, repassados pelo servidor sem gravar nada (ou direto, P2P, com `--p2p`).
 - **TUI cyberpunk**: janelas, contador de não lidas, menções, Tab-completion, histórico, mouse.
-- **Stack mobile**: [`android/`](android/README.md) traz o mesmo cliente para o
-  Android via WebView, apontando para o relay `wss://` do projeto.
 
 ## Instalação
 
