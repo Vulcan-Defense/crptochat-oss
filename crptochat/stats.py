@@ -98,6 +98,8 @@ class StatsFeed:
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
+        if not hasattr(asyncio, "start_unix_server"):
+            return
         try:
             os.unlink(self.path)
         except FileNotFoundError:

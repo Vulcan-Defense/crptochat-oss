@@ -239,3 +239,7 @@ já trata isso com os outros clientes.
    - página "verificar esta instalação".
 4. Aviso de "adicione à tela inicial" no iOS antes de criar a chave, e
    desbloqueio por passkey (PRF) como atalho opcional.
+5. **PQ obrigatório:** tornar ML-KEM-768 requisito apenas quando todos os
+   runtimes suportados, incluindo Pyodide, o oferecerem de forma confiável;
+   até lá, manter a negociação explícita da capacidade `pq` e informar quando
+   ela não estiver ativa.
