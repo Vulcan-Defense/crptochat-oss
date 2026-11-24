@@ -222,6 +222,7 @@
       <li><a href="#laboratorio">o que o servidor vê</a></li>
       <li><a href="#comandos">comandos</a></li>
       <li><a href="#codigo">código</a></li>
+      <li><a href="#privacidade">privacidade</a></li>
     </ul>
   </div>
   <div class="progress" id="progress"></div>
@@ -550,12 +551,47 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
      expõe o problema a todo mundo antes de existir correção.</div>
 </section>
 
+<section id="privacidade" class="reveal">
+  <h2><span class="k">§</span><span class="w">privacidade</span></h2>
+  <p class="sub">O resumo; a política completa está no repositório.</p>
+  <div class="grid">
+    <div class="card">
+      <h3>Esta página</h3>
+      <p>Estática: sem cookies, analytics, fontes ou scripts de terceiros. O provedor da hospedagem pode registrar
+         requisições HTTP comuns (endereço IP, horário, arquivo pedido).</p>
+    </div>
+    <div class="card">
+      <h3>Seu dispositivo</h3>
+      <p>A chave do nick nasce e fica cifrada com a sua senha no seu computador, pendrive ou cofre. O servidor
+         recebe só o nick e a chave pública.</p>
+    </div>
+    <div class="card">
+      <h3>O servidor</h3>
+      <p>Não lê mensagens. Vê metadados (quem, quando, canal, faixa de tamanho e IP da conexão). Em disco: nicks,
+         chaves públicas, canais e envelopes cifrados para quem está offline; o IP é guardado como hash com chave
+         secreta, nunca em texto.</p>
+    </div>
+    <div class="card">
+      <h3>Navegador</h3>
+      <p>Chaves e preferências ficam no IndexedDB; o service worker guarda os arquivos do build. Conexão por
+         <code>wss://</code>, sem rastreamento. Limpar os dados do site apaga também as chaves: faça backup.</p>
+    </div>
+  </div>
+  <div class="box warn"><strong>Servidor de terceiros:</strong> quem administra o servidor controla o que fica em
+     disco e nos backups. Para ter certeza, rode o seu.</div>
+  <p>As exceções e os limites — P2P (mostra seu IP ao destinatário), histórico cifrado de canal, mensagens offline,
+     atualizações e anônimos — estão na
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/PRIVACIDADE.md">política de privacidade completa</a>.</p>
+</section>
+
 <footer>
   <p>Limites honestos: o servidor ainda vê metadados (quem está online, em que canal, quando e a faixa de tamanho
      das mensagens) e, enquanto um recado offline espera, que alguém deixou algo para aquele nick. Print de tela e
      cliente adulterado não têm como ser impedidos. O código ainda não passou por auditoria independente, mas é
      aberto: revise e reporte o que encontrar.</p>
   <p>Esta página não carrega nada de fora, não tem rastreamento nem analytics.</p>
+  <p><a href="#privacidade">Resumo de privacidade</a> ·
+     <a href="https://github.com/hacking-table/crptochat-oss/blob/main/PRIVACIDADE.md">política completa</a>.</p>
 </footer>
 </div>
 
