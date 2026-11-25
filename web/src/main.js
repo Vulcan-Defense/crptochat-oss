@@ -118,7 +118,15 @@ function extras(py) {
 function terminalBridge(term) {
   let onData = null, onResize = null;
   const keys = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-                 slash: "/", pgup: "\x1b[5~", pgdn: "\x1b[6~" };
+                 slash: "/", pgup: "\x1b[5~", pgdn: "\x1b[6~", nl: "\n" };     // nl: new line (Ctrl+J)
+  // Shift+Enter: a new line in the message box, not send. xterm.js would send a
+  // plain \r; send what a terminal with the kitty keyboard protocol sends
+  // (Textual reads it as shift+enter).
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.key !== "Enter" || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return true;
+    if (e.type === "keydown") onData && onData("\x1b[13;2u");
+    return false;
+  });
   let ctrl = false;
   term.onData((d) => {
     if (ctrl && d.length === 1) { const c = d.toUpperCase().charCodeAt(0); if (c >= 64 && c < 96) d = String.fromCharCode(c - 64); }

@@ -109,6 +109,22 @@ try {
   await p.fill("#pass", "senha-do-e2e-1"); await p.click("#go");
   const again = await until(p, /conectado a .* como e2e_novo/, 60);
   check("online de novo, o servidor aceitou a mesma chave", !!again && !/registrado/.test(again));
+
+  // 2b. a message on several lines: Shift+Enter and the "↵ linha" key break the
+  // line in the box, Enter sends it all, and the log shows it on three lines: the
+  // 2nd and 3rd only indented after the panel border (no time, no nick), so it is
+  // one message, not three
+  await p.evaluate(() => window.crptoTerm.focus());
+  await p.keyboard.type("/join #lobby"); await p.keyboard.press("Enter");
+  await until(p, /você entrou em #lobby/, 30);
+  await p.keyboard.type("linha um"); await p.keyboard.press("Shift+Enter");
+  await p.keyboard.type("linha dois");
+  await p.locator("[data-k=nl]").dispatchEvent("click");
+  await p.evaluate(() => window.crptoTerm.focus());
+  await p.keyboard.type("linha tres"); await p.keyboard.press("Enter");
+  const multi = await until(p, /▏linha um[^\n]*\n[^\n]*┃ +▏linha dois[^\n]*\n[^\n]*┃ +▏linha tres/, 30);
+  check("Shift+Enter e o botão ↵ linha: uma mensagem em três linhas", !!multi,
+        multi ? "" : (await termText(p)).split("\n").filter((l) => /linha/.test(l)).join(" | "));
   await ctx.close();
 
   // 3. a browser without DecompressionStream (Safari < 16.4): a plain message, no crash

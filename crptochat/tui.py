@@ -144,6 +144,7 @@ MENU = [
 
 HELP = [
     ("/menu  (ou Esc / F1)", "abre o menu interativo com todas as ações"),
+    ("Shift+Enter · Ctrl+J", "nova linha na mensagem (Enter envia; Ctrl+J funciona em qualquer terminal)"),
     ("/list", "lista os canais do servidor"),
     ("/create #canal", "cria um canal aberto"),
     ("/create #canal privado", "cria um canal privado protegido por senha"),
@@ -207,6 +208,26 @@ def clean(text: str) -> str:
     """Neutralise control characters so peers cannot inject terminal escapes."""
     return "".join(" " if c in "\n\t" else c for c in text
                    if (c.isprintable() or c in "\n\t‍") and ord(c) not in _BIDI)
+
+
+MAX_SHOWN_LINES = 30     # lines of one message on screen; the rest is summarised
+
+
+def clean_multiline(text: str) -> str:
+    """clean(), but line breaks survive: messages can have several lines. Bounded
+    so a peer cannot flood the screen: no leading or trailing blank lines, at
+    most one blank line in a row, at most MAX_SHOWN_LINES lines."""
+    lines = []
+    for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = clean(raw).rstrip()
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    while lines and not lines[-1]:
+        lines.pop()
+    if len(lines) > MAX_SHOWN_LINES:
+        hidden = len(lines) - (MAX_SHOWN_LINES - 1)
+        lines = lines[:MAX_SHOWN_LINES - 1] + [f"… (+{hidden} linhas)"]
+    return "\n".join(lines)
 
 
 def fp_block(ik: bytes) -> str:
@@ -298,9 +319,11 @@ class Buffer:
 
 class ChatInput(TextArea):
     """Message box: long text wraps and the box grows (up to a few lines, then it
-    scrolls) instead of sliding sideways. Enter sends; a message is one line, so
-    pasted line breaks become spaces. Up/down walk the history only from the first
-    or last visual row; inside a wrapped message they move the cursor."""
+    scrolls) instead of sliding sideways. Enter sends; Shift+Enter starts a new
+    line (where the terminal tells them apart, which Textual asks for with the
+    kitty keyboard protocol), and so does Ctrl+J in any terminal. Up/down walk the
+    history only from the first or last visual row; inside the text they move the
+    cursor."""
 
     class Submitted(Message):
         def __init__(self, chat_input: "ChatInput", value: str):
@@ -312,6 +335,7 @@ class ChatInput(TextArea):
     # "texto\r" in one burst, and a priority binding would run Enter before the
     # letters queued ahead of it reach the box (it would send an empty line).
     _KEYS = {"enter": ("action_submit",), "tab": ("action_complete",),
+             "shift+enter": ("action_newline",), "ctrl+j": ("action_newline",),
              "up": ("action_history_or_move", -1), "down": ("action_history_or_move", 1)}
 
     async def _on_key(self, event) -> None:
@@ -337,25 +361,26 @@ class ChatInput(TextArea):
 
     @value.setter
     def value(self, text: str) -> None:
-        self.text = " ".join(text.splitlines())
+        self.text = text.replace("\r\n", "\n").replace("\r", "\n")
         self.move_cursor(self.document.end)
 
     @property
     def cursor_position(self) -> int:
-        return self.cursor_location[1]
+        """Offset of the cursor in the whole text (line breaks count as one)."""
+        return self.document.get_index_from_location(self.cursor_location)
 
     @cursor_position.setter
-    def cursor_position(self, column: int) -> None:
-        self.move_cursor((0, max(0, min(column, len(self.text)))))
+    def cursor_position(self, offset: int) -> None:
+        self.move_cursor(self.document.get_location_from_index(max(0, min(offset, len(self.text)))))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        text = self.text
-        if "\n" in text or "\r" in text:            # pasted text with line breaks: one line
-            row, col = self.cursor_location
-            offset = sum(len(line) + 1 for line in text.split("\n")[:row]) + col
-            flat = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
-            self.text = flat
-            self.move_cursor((0, min(len(flat), offset)))
+        if "\r" in self.text:                        # pasted CR/CRLF: plain line breaks
+            offset = self.cursor_position
+            self.text = self.text.replace("\r\n", "\n").replace("\r", "\n")
+            self.cursor_position = offset
+
+    def action_newline(self) -> None:
+        self.insert("\n")
 
     def action_submit(self) -> None:
         self.post_message(self.Submitted(self, self.text))
@@ -1247,15 +1272,23 @@ class ChatApp(App):
         edits, deletions, reactions and read receipts)."""
         nick, mine = entry["nick"], entry["mine"]
         color = CYAN if mine else nick_color(nick)
-        line = Text.assemble((entry["stamp"], DIM), (self.nick_col(nick), f"bold {color}"),
-                             (" ▏", MAGENTA if mine else DIM))
+        bar = MAGENTA if mine else DIM
+        line = Text.assemble((entry["stamp"], DIM), (self.nick_col(nick), f"bold {color}"), (" ▏", bar))
+        indent = " " * (line.cell_len - 1)          # continuation lines start under the ▏
         reply = entry.get("reply")
         if reply and not entry.get("deleted"):
-            line.append(f"↪ {reply['n']}: «{clean(reply['q'])[:40]}» ", style=DIM)
+            quote = " ".join(clean(reply["q"]).split())[:40]      # one line, even from a multi-line message
+            line.append(f"↪ {reply['n']}: «{quote}» ", style=DIM)
         if entry.get("deleted"):
             line.append("🗑 mensagem apagada", style=f"italic {DIM}")
         else:
-            line.append(clean(entry["text"]), style=f"bold {YELLOW}" if entry.get("mention") else TEXT)
+            style = f"bold {YELLOW}" if entry.get("mention") else TEXT
+            first, *more = entry["text"].split("\n")
+            line.append(first, style=style)
+            for extra in more:
+                line.append("\n" + indent)
+                line.append("▏", style=bar)
+                line.append(extra, style=style)
             if entry.get("edited"):
                 line.append(" (editada)", style=DIM)
         reactions = entry.get("reactions") or {}
@@ -1283,7 +1316,7 @@ class ChatApp(App):
 
     def chat_line(self, name: str, nick: str, text: str, mine: bool, ttl: int = 0,
                   mid: str | None = None, reply: dict | None = None) -> None:
-        text = clean(text)
+        text = clean_multiline(text)
         mention = not mine and self.client.nick.lower() in text.lower()
         entry = {"nick": nick, "mine": mine, "text": text, "stamp": self.stamp()[0], "mention": mention,
                  "reply": reply, "ttl": ttl}
@@ -1304,7 +1337,7 @@ class ChatApp(App):
         if alert and (name != self.current or mention):
             self.bell()
         if alert:
-            self.desktop_notify(name, nick, text, mention)
+            self.desktop_notify(name, nick, " ".join(text.split("\n")), mention)
 
     def desktop_notify(self, where: str, nick: str, text: str, mention: bool) -> None:
         """Only when you would otherwise miss it: another window, or the terminal is not focused."""
@@ -1512,7 +1545,7 @@ class ChatApp(App):
         entry = self._target(buffer, target, nick)
         if entry is None or entry["nick"].lower() != nick.lower():
             return              # only the author edits, and only what we still have
-        entry.update(text=clean(text), edited=True, mention=not entry["mine"] and self.client.nick.lower() in text.lower())
+        entry.update(text=clean_multiline(text), edited=True, mention=not entry["mine"] and self.client.nick.lower() in text.lower())
         self.update_msg(buffer, entry)
 
     def ev_delete(self, buffer: str, nick: str, target: str) -> None:
@@ -1672,6 +1705,8 @@ class ChatApp(App):
     def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         line = event.value.strip()
         event.input.value = ""
+        if line.startswith("/") and not line.startswith("//"):
+            line = " ".join(line.split("\n"))        # a command is one line
         if not line:
             if self.recorder.active:
                 self.run_cmd(self.finish_recording())
