@@ -333,7 +333,7 @@ def test_the_message_box_grows_with_long_text_and_sends_it_whole(home):
             box.value = ""
             box.insert("linha um\nlinha dois\r\nlinha três")                     # a paste with line breaks
             await pilot.pause(0.05)
-            assert box.value == "linha um linha dois linha três"
+            assert box.value == "linha um\nlinha dois\nlinha três"                # kept, CR/CRLF normalised
 
             # up/down move inside a wrapped message; the history only from its first/last row
             box.value = long
@@ -394,3 +394,62 @@ def test_in_the_browser_there_is_no_update_check(home, monkeypatch):
             await until(pilot, lambda: any("quem atualiza é o site" in ln for ln in lines(app)))
         await world.stop()
     asyncio.run(main())
+
+
+def test_shift_enter_and_ctrl_j_start_a_new_line_and_enter_sends_it_all(home):
+    """Shift+Enter (terminals with the kitty keyboard protocol, and the browser)
+    and Ctrl+J (any terminal) break the line; Enter sends the whole message, which
+    the other side shows on several lines, under the first."""
+    from textual import events
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(110, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            bob = await world.peer("bob")
+            await type_line(pilot, "/join #lobby")
+            await bob.join("#lobby")
+            await until(pilot, lambda: "bob" in app.client.channels["#lobby"].members)
+
+            for ch in "um":
+                await pilot.press(ch)
+            await pilot.press("shift+enter")
+            for ch in "dois":
+                await pilot.press(ch)
+            await pilot.press("ctrl+j")
+            for ch in "tres":
+                await pilot.press(ch)
+            assert app.input.value == "um\ndois\ntres"
+            await pilot.press("enter")
+            await until(pilot, lambda: any(k == "message" and d["text"] == "um\ndois\ntres" for k, d in bob.events))
+            assert app.input.value == ""
+
+            # a burst (one terminal read) with the kitty sequence for Shift+Enter in the middle
+            for key, ch in [("a", "a"), ("shift+enter", None), ("b", "b"), ("enter", "\r")]:
+                app.post_message(events.Key(key, ch))
+            await until(pilot, lambda: any(k == "message" and d["text"] == "a\nb" for k, d in bob.events))
+
+            # what bob sends on several lines shows on several lines, aligned under the text
+            bob.send_message("#lobby", "primeira\nsegunda\n\n\n\nterceira")
+            await until(pilot, lambda: any("primeira" in ln for ln in lines(app, "#lobby")))
+            shown = next(ln for ln in lines(app, "#lobby") if "primeira" in ln).split("\n")
+            assert [ln.split("▏", 1)[1] for ln in shown] == ["primeira", "segunda", "", "terceira"]   # one blank kept
+            assert len({ln.index("▏") for ln in shown}) == 1                               # aligned
+
+            # commands stay on one line
+            app.input.value = "/msg bob uma\nlinha só"
+            await pilot.press("enter")
+            await until(pilot, lambda: any(k == "message" and d["text"] == "uma linha só" for k, d in bob.events))
+        await world.stop()
+    asyncio.run(main())
+
+
+def test_multiline_text_is_cleaned_and_bounded():
+    clean_ml = tui.clean_multiline
+    assert clean_ml("a\r\nb\rc") == "a\nb\nc"
+    assert clean_ml("\n\n  x  \n\n\n\ny\n\n") == "  x\n\ny"                         # no flooding with blank lines
+    assert clean_ml("ok\x1b[2J\u202edanger\nfim") == "ok[2Jdanger\nfim"              # escapes and bidi still go
+    many = clean_ml("\n".join(f"l{i}" for i in range(100)))
+    shown = many.split("\n")
+    assert len(shown) == tui.MAX_SHOWN_LINES and shown[-1] == "… (+71 linhas)"
