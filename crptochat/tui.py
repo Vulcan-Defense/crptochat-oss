@@ -230,6 +230,26 @@ def clean_multiline(text: str) -> str:
     return "\n".join(lines)
 
 
+def sensitive_mode() -> bool:
+    """The browser's 'modo sensível' lowers how long plaintext stays in RAM."""
+    return os.environ.get("CRPTOCHAT_SENSITIVE") == "1"
+
+
+def retention_lines() -> int:
+    """Decrypted lines kept per conversation (200 in sensitive mode, 3000 otherwise)."""
+    default = "200" if sensitive_mode() else "3000"
+    try:
+        value = int(os.environ.get("CRPTOCHAT_LOG_LINES", default))
+    except ValueError:
+        value = int(default)
+    return max(50, min(value, 3000))
+
+
+def retention_inputs() -> int | None:
+    """Sent lines kept in the input's up/down history (None: the old, unbounded list)."""
+    return min(20, retention_lines()) if sensitive_mode() else None
+
+
 def fp_block(ik: bytes) -> str:
     """Fingerprint in two lines of three groups, for the narrow side panel."""
     groups = crypto.fingerprint(ik).split()
@@ -264,7 +284,7 @@ def banner() -> list[Text]:
 class Buffer:
     def __init__(self, name: str):
         self.name = name
-        self.lines: deque[Text] = deque(maxlen=3000)
+        self.lines: deque[Text] = deque(maxlen=retention_lines())
         self.expiry: dict[int, float] = {}     # id(line) -> when it disappears
         self.unread = 0
         self.alert = False
@@ -275,7 +295,7 @@ class Buffer:
     def remember(self, mid: str, entry: dict) -> None:
         self.msgs.pop(mid, None)
         self.msgs[mid] = entry
-        while len(self.msgs) > 3000:
+        while len(self.msgs) > retention_lines():
             del self.msgs[next(iter(self.msgs))]
 
     def last(self, mine: bool, nick: str | None = None) -> tuple[str, dict] | None:
@@ -306,10 +326,11 @@ class Buffer:
             return 0
         kept = [line for line in self.lines if id(line) not in gone]
         removed = len(self.lines) - len(kept)
-        self.lines = deque(kept, maxlen=3000)
+        self.lines = deque(kept, maxlen=retention_lines())
         live = {id(line) for line in self.lines}
         self.expiry = {key: when for key, when in self.expiry.items() if key in live}
         return removed
+
     @property
     def kind(self) -> str:
         return "chan" if self.name.startswith("#") else "dm" if self.name.startswith("@") else "sys"
@@ -402,6 +423,10 @@ class ChatInput(TextArea):
     def remember(self, line: str) -> None:
         if line and (not self.sent or self.sent[-1] != line):
             self.sent.append(line)
+        limit = retention_inputs()
+        if limit is not None:
+            while len(self.sent) > limit:
+                self.sent.pop(0)
         self._hpos = len(self.sent)
 
     def action_history(self, step: int) -> None:
@@ -775,7 +800,8 @@ class ChatApp(App):
             yield BufferList(id="buffers")
             with Vertical(id="center"):
                 yield Static(id="pinned")
-                yield ChatLog(id="log", wrap=True, markup=False, highlight=False, max_lines=3000, min_width=20)
+                yield ChatLog(id="log", wrap=True, markup=False, highlight=False,
+                              max_lines=retention_lines(), min_width=20)
             yield Static(id="members")
         yield Static(id="transfer")
         with Horizontal(id="inputbar"):
@@ -1243,6 +1269,32 @@ class ChatApp(App):
             return
         self.buffers[self.current].lines.clear()
         self.refill()
+
+    def clear_sensitive(self) -> None:
+        """Forget decrypted text from every window (called when the tab is left).
+
+        This drops the Textual buffers, not the IndexedDB where keys and
+        preferences live: decrypted messages are never stored there. The ratchet
+        and the encrypted protocol state stay intact, so the connection keeps
+        working. It is used by the web client's optional 'modo sensível'.
+        """
+        for buf in self.buffers.values():
+            buf.lines.clear()
+            buf.expiry.clear()
+            buf.msgs.clear()
+            buf.to_read.clear()
+            buf.unread = 0
+            buf.alert = False
+        self.mark = None
+        if hasattr(self, "input"):
+            self.input.value = ""
+            self.input.sent.clear()
+            self.input._cycle = None
+            self.input._hpos = 0
+        self.refill()
+        # The browser's xterm buffer is cleared at the same time; repaint all of
+        # the screen so borders and panels come back instead of only the log.
+        self.refresh()
 
     def add_line(self, name: str | None, line: Text, alert: bool = False, ttl: int = 0) -> None:
         buf = self.buffer(name or self.current)

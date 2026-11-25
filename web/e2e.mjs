@@ -56,10 +56,12 @@ if (!/cliente web/.test(serverOut)) {          // no WebSocket entrance: nothing
 }
 
 const browser = await chromium.launch();
+// The page no longer exposes the terminal object: read what xterm drew instead.
 const termText = (p) => p.evaluate(() => {
-  const b = window.crptoTerm && window.crptoTerm.buffer.active;
-  if (!b) return "";
-  let s = ""; for (let i = 0; i < b.length; i++) s += b.getLine(i).translateToString(true) + "\n";
+  let s = "";
+  for (const row of document.querySelectorAll(".xterm-rows > div")) {
+    s += row.textContent.replace(/\u00a0/g, " ").trimEnd() + "\n";
+  }
   return s;
 });
 const until = async (p, re, secs) => {
@@ -82,7 +84,10 @@ try {
   await p.fill("#nick", "e2e_novo");
   check("nick novo pede confirmação da senha", await p.isVisible("#pass2"));
   await p.fill("#pass", "senha-do-e2e-1"); await p.fill("#pass2", "senha-do-e2e-1");
+  await p.check("#sensitive");                 // the first session exercises the sensitive path
   await p.click("#go");
+  await p.waitForFunction(() => localStorage.getItem("crpto.sensitive") === "1");
+  check("modo sensível salvo na preferência", (await p.evaluate(() => localStorage.getItem("crpto.sensitive"))) === "1");
   await p.waitForSelector("#export:not([hidden])", { timeout: 30000 });
   const fp = (await p.textContent("#exp-fp")).replace("fingerprint ", "");
   check("backup antes do chat, com a fingerprint", /^\d{5}( \d{5}){5}$/.test(fp), fp);
@@ -93,6 +98,17 @@ try {
   await p.click("#exp-done");
   const first = await until(p, /conectado a .* como e2e_novo/, 60);
   check("online com a chave nova", !!first && /registrado/.test(first));
+  check("terminal não é global", await p.evaluate(() => !("crptoTerm" in window)));
+  // leaving the page in sensitive mode also drops the terminal's own buffer
+  await p.locator(".xterm-helper-textarea").focus();
+  await p.keyboard.type("segredo-da-tela"); await p.keyboard.press("Enter");
+  await until(p, /segredo-da-tela/, 30);
+  await p.evaluate(() => dispatchEvent(new Event("pagehide")));
+  await p.waitForFunction(() => !Array.from(document.querySelectorAll(".xterm-rows > div"))
+                                     .some((r) => r.textContent.includes("segredo-da-tela")),
+                          null, { timeout: 15000 });
+  check("modo sensível limpa também o buffer do xterm ao sair da página",
+        !(await termText(p)).includes("segredo-da-tela"));
   await ctx.close();
 
   // 2. a clean browser: the backup back in, then online with the same key
@@ -114,13 +130,13 @@ try {
   // line in the box, Enter sends it all, and the log shows it on three lines: the
   // 2nd and 3rd only indented after the panel border (no time, no nick), so it is
   // one message, not three
-  await p.evaluate(() => window.crptoTerm.focus());
+  await p.locator(".xterm-helper-textarea").focus();
   await p.keyboard.type("/join #lobby"); await p.keyboard.press("Enter");
   await until(p, /você entrou em #lobby/, 30);
   await p.keyboard.type("linha um"); await p.keyboard.press("Shift+Enter");
   await p.keyboard.type("linha dois");
   await p.locator("[data-k=nl]").dispatchEvent("click");
-  await p.evaluate(() => window.crptoTerm.focus());
+  await p.locator(".xterm-helper-textarea").focus();
   await p.keyboard.type("linha tres"); await p.keyboard.press("Enter");
   const multi = await until(p, /▏linha um[^\n]*\n[^\n]*┃ +▏linha dois[^\n]*\n[^\n]*┃ +▏linha tres/, 30);
   check("Shift+Enter e o botão ↵ linha: uma mensagem em três linhas", !!multi,

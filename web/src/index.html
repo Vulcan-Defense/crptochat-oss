@@ -32,6 +32,11 @@
     <label id="pass2-row" hidden>repita a senha <input id="pass2" name="password2" type="password" autocomplete="new-password"></label>
     <p id="keyinfo" class="hint"></p>
     <label class="row"><input id="anon" type="checkbox"> entrar anônimo (nada é registrado)</label>
+    <label class="row"><input id="sensitive" type="checkbox"> modo sensível (menos texto na memória da página)</label>
+    <p id="sensitive-why" class="hint">Desligado por padrão. Para aparecer na tela, a mensagem precisa estar na
+      memória do navegador. Neste modo ficam só 200 linhas por conversa e 20 no histórico do campo de texto;
+      ao sair da aba por mais de 15 s, a tela é apagada. Isso não muda a cifragem nem apaga o que o outro
+      participante tem.</p>
     <label class="row"><input id="save-pw" type="checkbox"> pedir ao navegador para guardar esta senha</label>
     <p id="save-pw-why" class="hint">Desligado por padrão. Se a senha da chave ficar no gerenciador de senhas e o
       backup da chave também, o gerenciador vira a única proteção: guarde o backup em outro lugar. O

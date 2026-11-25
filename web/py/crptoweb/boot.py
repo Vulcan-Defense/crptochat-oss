@@ -42,9 +42,17 @@ def prepare() -> None:
     asyncio.to_thread = _inline
 
 
-async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = False) -> str:
-    """Runs the chat until it ends; returns why it ended (for the page)."""
+async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = False,
+                sensitive: bool = False) -> str:
+    """Runs the chat until it ends; returns why it ended (for the page).
+
+    ``sensitive`` is the web page's optional 'modo sensível': keep fewer
+    decrypted lines and wipe the screen when the tab is left.
+    """
     prepare()
+    # Read by crptochat.tui when a Buffer/ChatLog is created, so setting it here
+    # (before ChatApp) is enough even though the page imported tui earlier.
+    os.environ["CRPTOCHAT_SENSITIVE"] = "1" if sensitive else "0"
     driver.TERMINAL = terminal
 
     host, port, tls = check_url(url)
@@ -74,5 +82,23 @@ async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = Fa
         return ChatClient(host, port, identity, store, on_event, tls=False, external_tls=tls, guest=guest,
                           download_dir=os.path.join(HOME, "downloads"))
 
-    fatal = await ChatApp(factory).run_async()
+    app = ChatApp(factory)
+    hide = None
+    if sensitive:
+        # JS keeps this callback after start() is gone: make a proxy, and free it
+        # on the way out. The browser side waits ~15 s before calling it, so a
+        # quick switch to another tab does not wipe the screen.
+        from pyodide.ffi import create_proxy
+
+        def wipe():
+            app.call_later(app.clear_sensitive)
+
+        hide = create_proxy(wipe)
+        terminal.set_hide_handler(hide)
+    try:
+        fatal = await app.run_async()
+    finally:
+        if hide is not None:
+            terminal.set_hide_handler(None)
+            hide.destroy()
     return str(fatal or "sessão encerrada")

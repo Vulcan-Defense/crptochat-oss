@@ -4,6 +4,7 @@ import asyncio
 import os
 
 import pytest
+from rich.text import Text
 from textual.widgets import OptionList
 
 from crptochat import crypto, themes, tui
@@ -474,5 +475,84 @@ def test_a_reply_to_a_multiline_message_quotes_it_on_one_line(home):
             reply = next(ln for ln in lines(app, "#lobby") if "entendi" in ln)
             assert "\n" not in reply
             assert "«primeira linha segunda terceira linha be» entendi" in reply   # 40 chars, single spaces
+        await world.stop()
+    asyncio.run(main())
+
+
+def test_sensitive_mode_limits_retention(monkeypatch):
+    monkeypatch.delenv("CRPTOCHAT_SENSITIVE", raising=False)
+    monkeypatch.delenv("CRPTOCHAT_LOG_LINES", raising=False)
+    assert not tui.sensitive_mode()
+    assert tui.retention_lines() == 3000
+    assert tui.retention_inputs() is None
+
+    monkeypatch.setenv("CRPTOCHAT_SENSITIVE", "1")
+    assert tui.sensitive_mode()
+    assert tui.retention_lines() == 200
+    assert tui.retention_inputs() == 20
+
+    monkeypatch.setenv("CRPTOCHAT_LOG_LINES", "60")
+    assert tui.retention_lines() == 60
+    monkeypatch.setenv("CRPTOCHAT_LOG_LINES", "abc")               # bad value: back to the mode's default
+    assert tui.retention_lines() == 200
+    monkeypatch.setenv("CRPTOCHAT_LOG_LINES", "99999")
+    assert tui.retention_lines() == 3000
+    monkeypatch.setenv("CRPTOCHAT_LOG_LINES", "1")
+    assert tui.retention_lines() == 50
+
+    monkeypatch.setenv("CRPTOCHAT_SENSITIVE", "0")
+    assert tui.retention_inputs() is None                          # outside sensitive mode, history is unbounded
+    assert tui.retention_lines() == 50                             # the explicit override still applies
+
+
+def test_sensitive_mode_caps_buffers_and_input_history(monkeypatch):
+    monkeypatch.setenv("CRPTOCHAT_SENSITIVE", "1")
+    monkeypatch.setenv("CRPTOCHAT_LOG_LINES", "80")
+
+    buf = tui.Buffer("#cofre")
+    assert buf.lines.maxlen == 80
+    for i in range(100):
+        buf.lines.append(Text(f"linha {i}"))
+    assert len(buf.lines) == 80 and buf.lines[0].plain == "linha 20"
+
+    for i in range(100):
+        buf.remember(str(i), {"line": Text(str(i)), "mine": True})
+    assert len(buf.msgs) == 80 and "19" not in buf.msgs
+
+    box = tui.ChatInput()
+    for i in range(100):
+        box.remember(f"mandada {i}")
+    assert box.sent == [f"mandada {i}" for i in range(80, 100)]
+
+
+def test_clear_sensitive_forgets_plaintext_but_keeps_the_client(home, monkeypatch):
+    """What the page wipes when the tab is left: only what the interface holds."""
+    monkeypatch.setenv("CRPTOCHAT_SENSITIVE", "1")
+
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            await type_line(pilot, "/join #lobby")
+            await until(pilot, lambda: app.current == "#lobby")
+            await type_line(pilot, "segredo antes da limpeza")
+            await until(pilot, lambda: any("segredo antes da limpeza" in ln for ln in lines(app, "#lobby")))
+            buf = app.buffers["#lobby"]
+            assert buf.lines and buf.msgs
+            app.input.value = "rascunho sensível"
+            app.input.remember("rascunho sensível")
+
+            app.clear_sensitive()
+            assert all(not b.lines and not b.msgs and not b.to_read for b in app.buffers.values())
+            assert app.input.value == "" and not app.input.sent
+            assert app.input._hpos == 0 and app.input._cycle is None
+            await pilot.pause(0.05)
+            assert "segredo antes da limpeza" not in text(app.query_one("#log"))
+            assert app.client.online                                  # connection/ratchet untouched
+
+            # the chat keeps working after the wipe
+            await type_line(pilot, "/quit")
+
         await world.stop()
     asyncio.run(main())
