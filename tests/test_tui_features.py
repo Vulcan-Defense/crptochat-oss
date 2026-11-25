@@ -453,3 +453,26 @@ def test_multiline_text_is_cleaned_and_bounded():
     many = clean_ml("\n".join(f"l{i}" for i in range(100)))
     shown = many.split("\n")
     assert len(shown) == tui.MAX_SHOWN_LINES and shown[-1] == "… (+71 linhas)"
+
+
+def test_a_reply_to_a_multiline_message_quotes_it_on_one_line(home):
+    """The quote inside «…» stays on the reply's line: line breaks and the runs of
+    spaces they leave become single spaces before it is cut to 40 characters."""
+    async def main():
+        world = World(home)
+        app = await world.start()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await until(pilot, lambda: app.client.online)
+            bob = await world.peer("bob")
+            await type_line(pilot, "/join #lobby")
+            await bob.join("#lobby")
+            await until(pilot, lambda: "bob" in app.client.channels["#lobby"].members)
+            bob.send_message("#lobby", "primeira linha\nsegunda\n\n\nterceira linha bem comprida aqui")
+            await until(pilot, lambda: any("primeira linha" in ln for ln in lines(app, "#lobby")))
+            await type_line(pilot, "/reply bob entendi")
+            await until(pilot, lambda: any("entendi" in ln for ln in lines(app, "#lobby")))
+            reply = next(ln for ln in lines(app, "#lobby") if "entendi" in ln)
+            assert "\n" not in reply
+            assert "«primeira linha segunda terceira linha be» entendi" in reply   # 40 chars, single spaces
+        await world.stop()
+    asyncio.run(main())

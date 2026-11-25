@@ -1277,7 +1277,8 @@ class ChatApp(App):
         indent = " " * (line.cell_len - 1)          # continuation lines start under the ▏
         reply = entry.get("reply")
         if reply and not entry.get("deleted"):
-            line.append(f"↪ {reply['n']}: «{clean(reply['q'])[:40]}» ", style=DIM)
+            quote = " ".join(clean(reply["q"]).split())[:40]      # one line, even from a multi-line message
+            line.append(f"↪ {reply['n']}: «{quote}» ", style=DIM)
         if entry.get("deleted"):
             line.append("🗑 mensagem apagada", style=f"italic {DIM}")
         else:
