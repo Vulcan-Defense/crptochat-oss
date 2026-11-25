@@ -24,6 +24,7 @@ function defaultWsUrl() {
 
 $("url").value = remember("crpto.url") || defaultWsUrl();
 $("nick").value = remember("crpto.nick") || "";
+$("sensitive").checked = remember("crpto.sensitive") === "1";
 
 async function syncfs(py, populate) {
   return new Promise((ok, fail) => py.FS.syncfs(populate, (err) => (err ? fail(err) : ok())));
@@ -116,7 +117,7 @@ function extras(py) {
 }
 
 function terminalBridge(term) {
-  let onData = null, onResize = null;
+  let onData = null, onResize = null, onHide = null, hideTimer = null;
   const keys = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
                  slash: "/", pgup: "\x1b[5~", pgdn: "\x1b[6~", nl: "\n" };     // nl: new line (Ctrl+J)
   // Shift+Enter: a new line in the message box, not send. xterm.js would send a
@@ -141,10 +142,33 @@ function terminalBridge(term) {
     else onData && onData(keys[k]);
     term.focus();
   });
+  // Sensitive sessions ask Python to wipe decrypted lines when the page is
+  // left. A short delay spares a quick Alt-Tab; closing/navigating wipes now.
+  // term.clear() drops xterm's own buffer and scrollback: clearing only the
+  // Textual buffers would leave the same plaintext in the scroll above the app.
+  const hideNow = () => {
+    term.clear();
+    onHide();
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!onHide) return;
+    if (document.visibilityState === "hidden") {
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => { hideTimer = null; hideNow(); }, 15000);
+    } else if (hideTimer) {
+      clearTimeout(hideTimer); hideTimer = null;
+    }
+  });
+  addEventListener("pagehide", () => {
+    if (!onHide) return;
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    hideNow();
+  });
   return {
     write: (data) => term.write(data),
     size: () => [term.cols, term.rows],
     set_handlers: (data, resize) => { onData = data; onResize = resize; },
+    set_hide_handler: (cb) => { onHide = cb; },
   };
 }
 
@@ -354,7 +378,9 @@ $("imp-confirm-cancel").addEventListener("click", () => {
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const py = await ready;
-  const url = $("url").value.trim(), nick = $("nick").value.trim(), pass = $("pass").value, anon = $("anon").checked;
+  const url = $("url").value.trim(), nick = $("nick").value.trim(), pass = $("pass").value,
+        anon = $("anon").checked, sensitive = $("sensitive").checked;
+  remember("crpto.sensitive", sensitive ? "1" : "0");
   const info = $("keyinfo"), isNew = creating;
   if (!anon) {
     if (isNew && pass !== $("pass2").value) { info.className = "hint err"; info.textContent = "as senhas não conferem"; return; }
@@ -385,16 +411,16 @@ $("form").addEventListener("submit", async (ev) => {
     await syncfs(py, false);
     refreshMode();                       // the key exists now: clears old warnings, enables export
     if (brandNew) {                      // no chat before the backup is offered
-      afterBackup = () => launch(py, url, nick, pass, anon);
+      afterBackup = () => launch(py, url, nick, pass, anon, sensitive);
       status("");
       openExport(nick, opened.fingerprint, true);
       return;
     }
   }
-  launch(py, url, nick, pass, anon);
+  launch(py, url, nick, pass, anon, sensitive);
 });
 
-async function launch(py, url, nick, pass, anon) {
+async function launch(py, url, nick, pass, anon, sensitive) {
   remember("crpto.url", url); if (!anon) remember("crpto.nick", nick);
   $("go").disabled = true; status("carregando o resto…");
   try { await extras(py); } catch (err) { status("falha ao carregar: " + err.message, true); $("go").disabled = false; return; }
@@ -414,9 +440,10 @@ async function launch(py, url, nick, pass, anon) {
   addEventListener("pagehide", () => syncfs(py, false).catch(() => {}));
   const start = py.globals.get("__import__")("crptoweb.boot").boot.start;
   mark("login");
-  window.crptoTerm = term;
+  // The terminal handle stays local: window.crptoTerm exposed decrypted lines
+  // in the xterm buffer/DOM to any script running in this page.
   try {
-    const why = await start(terminalBridge(term), url, nick, pass, anon);
+    const why = await start(terminalBridge(term), url, nick, pass, anon, sensitive);
     term.reset(); term.write("\r\n  " + why + "\r\n  recarregue a página para entrar de novo.\r\n");
   } catch (err) {
     term.write("\r\n\x1b[31m  " + String(err).split("\n").slice(-2).join(" ") + "\x1b[0m\r\n  recarregue a página para tentar de novo.\r\n");

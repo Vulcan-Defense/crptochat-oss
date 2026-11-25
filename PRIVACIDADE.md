@@ -161,6 +161,20 @@ cliente de terminal.
   limita conexões à própria origem e a WebSockets (`wss://` em produção;
   `ws://localhost` só no desenvolvimento); o endereço do chat é o que você
   informa na página.
+- **Texto decifrado na tela.** A cifragem de ponta a ponta não cobre o
+  dispositivo que mostra a mensagem: para aparecer, o texto precisa estar em
+  claro na memória do navegador — nos buffers do Textual e no buffer/DOM do
+  xterm.js. Isso **não vem do IndexedDB**, onde ficam apenas chaves e
+  preferências; as mensagens descriptografadas não são gravadas nele. A página
+  não publica mais o objeto do terminal (`window.crptoTerm`) como atalho para
+  esse conteúdo, mas qualquer script que rode na página ou extensão com acesso
+  a ela ainda pode ler a tela. O **modo sensível** (opt-in, desligado por padrão)
+  limita a retenção a 200 linhas por conversa e 20 no histórico do campo de
+  texto, e apaga o que a interface guarda — incluído o scrollback do xterm.js —
+  quando a aba fica oculta por mais de 15 s ou é fechada. Isso reduz a janela
+  de exposição; não apaga cópias em
+  outro dispositivo nem muda o que o servidor vê. Depois da limpeza, mensagens
+  antigas podem não estar mais disponíveis para responder, editar ou reagir.
 
 ## O que o projeto não faz
 

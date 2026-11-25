@@ -105,6 +105,35 @@ xterm.js e a conexão com o servidor usa a entrada WebSocket
 - **Sem threads no navegador.** `asyncio.to_thread` roda em linha, então o
   scrypt de canal com senha trava a tela por um instante.
 
+## Modo sensível
+
+A caixa **modo sensível** na tela de login é opt-in (desligada por padrão e
+lembrada na próxima visita). Ela reduz o que fica no contexto da página:
+cada conversa guarda no máximo **200 linhas** decifradas em vez de 3000, o
+histórico do campo de texto guarda no máximo **20 linhas**, e ao sair da aba por
+mais de 15 s (ou ao fechar/navegar) a interface apaga as linhas, o histórico,
+o texto em edição e as mensagens às quais ainda dava para responder/editar.
+No mesmo gatilho, o xterm.js limpa o próprio buffer e o scrollback: limpar só
+o Textual deixaria as mensagens na rolagem acima da tela. A conexão e o estado
+cifrado continuam: só some o que a interface mantinha para desenhar a tela.
+
+O motivo é que a cifra de ponta a ponta protege o fio e o servidor, **não o
+contexto onde a mensagem aparece**. Para ser exibida, a mensagem precisa estar
+em claro na memória do navegador: nos buffers do Textual e no buffer/DOM do
+xterm.js. **Não é o IndexedDB** — ali ficam só chaves e preferências; as
+mensagens descriptografadas não são gravadas lá. Foi justamente lendo
+`window.crptoTerm.buffer` que se confirmou o plaintext na tela. Qualquer script
+que rode naquela página — ou uma extensão com acesso a ela — pode fazer o mesmo.
+Antes, o xterm.js era exposto como `window.crptoTerm`, o que tornava essa leitura
+trivial; o objeto não é mais publicado. Isso não impede leitura por depurador ou
+código que já roda na página: apenas encurta a janela e remove o atalho. Não use
+o cliente web numa origem de que você não confie.
+
+`CRPTOCHAT_SENSITIVE=1` ativa o modo fora da página, e `CRPTOCHAT_LOG_LINES`
+ajusta o limite (50 a 3000) para quem quiser outro valor no cliente de terminal.
+O modo sensível não apaga cópias que outra pessoa tenha, nem o que o servidor
+guarda cifrado.
+
 ## Chaves e cofres de senha
 
 O navegador não roda `pass`, `secret-tool` nem `vault` como o terminal. A
