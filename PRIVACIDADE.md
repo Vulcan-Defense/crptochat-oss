@@ -5,7 +5,7 @@ downloads, no cliente de terminal, no cliente de navegador e no servidor. Ele
 descreve o que o código faz, não promete mais do que o código entrega. Onde há
 uma exceção, ela está escrita aqui.
 
-Atualizado em 24/11/2026.
+Atualizado em 25/11/2026.
 
 ## Quem responde por quê
 
@@ -13,7 +13,8 @@ Este documento descreve o comportamento do software. Quem opera um servidor é
 responsável por ele: o projeto não coleta nem tem acesso a dados de nenhum
 servidor. Se você usa o servidor de outra pessoa, pergunte a quem opera o que
 fica em disco, por quanto tempo e como são os backups; o cliente não consegue
-impor uma política ao servidor alheio.
+impor uma política ao servidor alheio. Se você é quem opera, veja
+*Servidor próprio e equipamentos de OT*.
 
 ## Resumo
 
@@ -139,6 +140,89 @@ Histórico, envelopes offline e recados expirados são apagados do banco quando
 expiram ou quando o operador desliga o recurso. Contas, cargos e bans ficam até
 o operador removê-los. Backups feitos pelo operador podem conservar cópias por
 mais tempo.
+
+## Servidor próprio e equipamentos de OT
+
+Quem roda o servidor na própria rede — inclusive num gateway, num servidor de
+manutenção ou junto de sistemas de OT — decide onde ele escuta e o que fica em
+disco. O programa não muda a sua política de rede: ele só atende no endereço e
+na porta que você indicar e guarda o que está descrito em *O servidor*.
+
+- **Rede e escuta.** Prefira uma VM ou uma VLAN de administração, separada da
+  rede de controle de processo. Use `--host` para a interface da rede de
+  manutenção em vez de deixar `0.0.0.0`, e libere no firewall apenas a porta de
+  escuta (`7777/TCP` no padrão) para quem deve conectar — e a porta WebSocket
+  (`--ws-port`, padrão `7778`) se usar o cliente web. Em rede fechada, o
+  certificado autoassinado gerado no primeiro start, com a
+  fingerprint passada aos clientes por `--pin`, é suficiente: o conteúdo
+  continua cifrado ponta a ponta. `--no-tls` só em segmento isolado e de
+  confiança; mesmo assim os metadados trafegam visíveis para quem captura a rede.
+- **Cliente web em OT.** A entrada WebSocket fica desligada sem `--ws-port`
+  (padrão `7778`, escutando em `127.0.0.1`). O navegador não aceita o certificado
+  autoassinado que o terminal fixa por `--pin`: use um proxy reverso com
+  certificado de CA confiável pelos navegadores (a documentação do projeto mostra
+  CA pública; uma CA interna vale se estiver instalada nos equipamentos) e
+  `--ws-origin` com a origem exata da página, ou `--ws-cert`/`--ws-key` com
+  esse certificado. `--ws-origin` compara a origem de forma exata e devolve HTTP
+  403 para as demais. Sem isso, use o cliente de terminal com `--pin`. O
+  WebSocket não exige Internet: exige a página e o servidor na mesma rede e a
+  origem conferida.
+- **Dados em disco.** O diretório passado em `--data` é criado com permissão
+  `0700`; mantenha-o restrito, rode o serviço com usuário dedicado e não o
+  compartilhe por NFS/SMB nem exponha `registry.db`. O banco guarda contas,
+  canais, prekeys, histórico cifrado (quando ligado), recados fixados **em
+  claro** e hashes de IP com a chave `ip_salt` **no mesmo arquivo**: quem copia o
+  banco copia também a chave dos hashes. Trate backups como dado sensível,
+  defina prazo de retenção e apague cópias antigas.
+- **Histórico, caixa postal e recados.** O histórico de canal vem desligado
+  (`history 0`); a caixa postal vem **ligada**, com mensagens para offline
+  guardadas por 14 dias (`mail_days 14`). Se precisar de histórico, use o menor
+  prazo aceitável com `crptochat-admin --data DIR policy #canal history N`;
+  para desligar, use `history 0`. Para desligar a caixa postal, use
+  `crptochat-admin --data DIR ratelimit set mail_days 0`. Mesmo cifrado, o
+  histórico mantém em claro o autor e o horário de cada linha, e os recados
+  fixados mantêm o texto em claro: restrinja quem pode publicar recados.
+- **Quem entra.** Use `--no-guests` quando só pessoas conhecidas devem conectar
+  (o `guests off` do console vale só até o reinício). `--reg-token`, ou a variável
+  `CRPTOCHAT_REG_TOKEN`, controla quem pode criar nick; `--reg-limit` ajusta o
+  número de nicks novos por IP por hora (padrão 5). Anônimos que recebem ban de
+  canal mantêm o endereço na RAM até o servidor reiniciar.
+- **IP e limites.** O servidor precisa do endereço para encaminhar e limitar:
+  ele fica em texto na RAM durante a sessão e por `ip_memory` (padrão 600 s)
+  depois da desconexão. Para reduzir esse tempo,
+  `crptochat-admin --data DIR ratelimit set ip_memory 0` — mas a proteção
+  contra flood entre reconexões rápidas some. Os limites por IP usam o endereço
+  real do socket; na entrada WebSocket atrás de proxy, usam o último
+  `X-Forwarded-For` (aceito só de loopback ou de intervalos passados em
+  `--ws-trusted-proxy`). Se várias estações passam pelo mesmo NAT/gateway,
+  aumente `conns_per_ip` e `anon_per_ip`, ou elas dividirão a mesma cota.
+- **Logs e observabilidade.** O `crptochat-server` não mantém log de acesso por
+  conexão: na saída padrão saem o banner e a fingerprint do certificado; no
+  stderr, só o tipo de erro interno — nunca conteúdo de mensagem. O proxy
+  reverso, o balanceador e o Docker/journal podem guardar logs próprios; os do
+  proxy incluem IP e horário — configure a retenção deles também.
+  `crptochat-dash` mostra só contagens agregadas; `crptochat-admin` mostra nicks,
+  cargos, bans e recados (não mostra conversas). Os sockets locais do painel e
+  do console são criados com permissão `0600`, mas o diretório que os contém
+  também precisa estar protegido.
+- **Atualizações em rede fechada.** `/update` consulta GitHub e site por padrão.
+  Nos clientes, fixe `CRPTOCHAT_UPDATE_URL` num espelho interno ou use
+  `CRPTOCHAT_UPDATE_FALLBACK=off` quando não houver saída para a Internet. O
+  servidor pode **sugerir** uma origem com `updaterepo`, mas cada cliente
+  confirma a troca e continua exigindo release assinada. Sem Internet, baixe a
+  release num computador conectado, confira a assinatura e leve o artefato para
+  a rede OT por mídia controlada.
+- **Arquivos e P2P.** Blocos enviados pelo servidor são cifrados e passam só pela
+  memória; `crptochat-admin --data DIR ratelimit set file_max_mb 0` desliga esse
+  envio se a política de OT não o permitir. `/send --p2p` conecta as duas
+  máquinas diretamente e revela o IP de cada lado — evite onde isso não for
+  aceitável.
+- **Manutenção.** Antes de trocar de versão, rode
+  `python -m crptochat.selftest` (no Docker,
+  `docker exec crptochat python -m crptochat.selftest --probe 127.0.0.1:7777 --stats /data`)
+  e confira o painel agregado. Faça backup de todo o diretório `--data` antes de
+  atualizar e teste o restore: `ip_salt`, contas e prekeys precisam voltar
+  juntos, ou os clientes não abrem conversas com quem estava offline.
 
 ## O cliente de navegador
 
