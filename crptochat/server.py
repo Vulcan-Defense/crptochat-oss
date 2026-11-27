@@ -2054,6 +2054,13 @@ async def _amain(args) -> None:
                     "ws atrás do proxy (rede privada)" if gate.plain_remote
                     else "ws em loopback, atrás do proxy reverso")
                 print(f"  cliente web: {mode} em {args.ws_host}:{ws_port} · origens: {', '.join(gate.origins)}")
+                if args.ws_public_url:
+                    from .webgate import invite_links
+                    try:
+                        for link in invite_links(gate.origins, args.ws_public_url):
+                            print(f"  convite (navegador): {link}")
+                    except ValueError as exc:
+                        print(f"  convite: não gerado — {exc}")
     feed = None
     if not args.no_stats:
         from .stats import StatsFeed, socket_path
@@ -2128,6 +2135,9 @@ administração com o servidor no ar (mesmo --data):
                      help="permite WebSocket sem TLS em endereço não-loopback, em rede privada (com proxy de confiança)")
     web.add_argument("--ws-trusted-proxy", action="append", default=[], metavar="ADDR/CIDR",
                      help="proxy reverso de confiança para ler X-Forwarded-For / X-Real-IP (repita para vários)")
+    web.add_argument("--ws-public-url", metavar="URL",
+                     help="endereço wss:// público desta entrada (ex.: wss://chat.exemplo.org): ao subir, o servidor "
+                          "imprime o link de convite <origem>/web/#servidor=<URL> para cada --ws-origin")
     args = ap.parse_args(argv)
     try:
         asyncio.run(_amain(args))

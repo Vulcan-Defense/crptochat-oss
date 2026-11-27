@@ -561,7 +561,9 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
     <li>Tenha um <b>servidor seu</b> com a entrada WebSocket ligada e aceitando esta página: este site só entrega a
         página, não tem servidor de chat. Por exemplo, atrás de um proxy com TLS:
         <code>crptochat-server --ws-port 7778 --ws-origin https://crptochat.acpt.app.br</code>
-        (ou TLS direto com <code>--ws-cert</code> e <code>--ws-key</code>; veja o README).</li>
+        (ou TLS direto com <code>--ws-cert</code> e <code>--ws-key</code>; veja o README). Com
+        <code>--ws-public-url wss://…</code> o servidor imprime ao subir o link de convite para mandar a quem
+        vai entrar; no chat, <code>/convite</code> faz o mesmo.</li>
     <li>Abra <a href="/web/"><code>/web/</code></a> e informe o endereço <code>wss://</code> do seu servidor. Na
         primeira visita a página baixa o cliente (uns 15 MB); das próximas vezes ela abre do que ficou guardado no
         navegador.</li>
