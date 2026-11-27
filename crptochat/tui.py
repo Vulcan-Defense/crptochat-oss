@@ -27,7 +27,7 @@ from . import audio
 from .audio import AudioError, Player, Recorder, sniff
 from .client import ChatClient, ChatError, NeedPassphrase
 from .p2p import human_size
-from .protocol import MAX_TTL, format_duration, is_guest_nick, parse_duration, valid_chan, valid_nick
+from .protocol import DEFAULT_PORT, MAX_TTL, format_duration, is_guest_nick, parse_duration, valid_chan, valid_nick
 from . import themes, update, vault
 from .notify import Notifier
 from .store import BadPassphrase, Identity, load_prefs, save_prefs
@@ -145,6 +145,7 @@ MENU = [
 HELP = [
     ("/menu  (ou Esc / F1)", "abre o menu interativo com todas as ações"),
     ("Shift+Enter · Ctrl+J", "nova linha na mensagem (Enter envia; Ctrl+J funciona em qualquer terminal)"),
+    ("/convite", "convite para este servidor: o comando do terminal (com o --pin) ou o link do navegador"),
     ("/list", "lista os canais do servidor"),
     ("/create #canal", "cria um canal aberto"),
     ("/create #canal privado", "cria um canal privado protegido por senha"),
@@ -191,6 +192,9 @@ UPDATE_EVERY = 6 * 3600     # seconds between automatic update checks while the 
 # In the browser (Pyodide) the site serves each new version: there is no binary to
 # replace and no direct socket for the updater, so there is nothing to check.
 IN_BROWSER = sys.platform == "emscripten"
+# Set by the browser client (crptoweb.boot): the link to this page with this server
+# filled in. The terminal does not know the server's public wss:// address.
+WEB_INVITE = ""
 
 GENERATE = ("gerar", "gera", "random", "aleatoria", "aleatória")
 REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "😂", "<3": "❤️", "coracao": "❤️",
@@ -199,7 +203,7 @@ REACTIONS = {"+1": "👍", "-1": "👎", "ok": "👌", "kkk": "😂", "haha": "�
 COMMANDS = ["/help", "/menu", "/list", "/create", "/join", "/leave", "/msg", "/query", "/send", "/rec", "/voicemask", "/play", "/stop", "/accept",
             "/reject", "/announce", "/reply", "/react", "/edit", "/del", "/receipts", "/away", "/back", "/friend", "/friends", "/theme", "/update", "/mode", "/chanpass", "/ttl", "/op", "/deop", "/voice", "/devoice",
             "/kick", "/ban", "/unban", "/bans", "/roles", "/policy", "/invite", "/owner", "/gkick", "/gban", "/gunban",
-            "/who", "/whois", "/verify", "/unverify", "/fp", "/passwd", "/search", "/notify", "/clear", "/quit"]
+            "/who", "/whois", "/convite", "/verify", "/unverify", "/fp", "/passwd", "/search", "/notify", "/clear", "/quit"]
 
 _BIDI = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
 
@@ -3045,6 +3049,30 @@ class ChatApp(App):
         for peer in sorted(ch.members.values(), key=lambda p: p.key):
             mark = "  ⚠ CHAVE MUDOU" if peer.pending_ik else "  ✓" if self.client.store.is_verified(peer.nick) else ""
             self._fp_line(peer.nick, peer.ik, mark)
+
+    def cmd_convite(self, _):
+        """An invite to this server, to paste wherever the person is (the channel
+        you send it through is what they trust: the --pin travels inside it)."""
+        if IN_BROWSER:
+            if not WEB_INVITE:
+                raise ChatError("não sei o endereço desta página para montar o convite")
+            self.note("convite para este servidor, para abrir no navegador (copie a linha abaixo):", "ok")
+            self.note(WEB_INVITE, "info")
+            self.note("a página só preenche o servidor: quem recebe confere e entra. Quem usa o terminal "
+                      "precisa do endereço e da porta TCP do servidor, que o navegador não conhece.", "info")
+            return
+        c = self.client
+        target = c.host if c.port == DEFAULT_PORT else f"{c.host}:{c.port}"
+        if c.tls:
+            pin = c.pin or c.store.server_pin()
+            command = f"crptochat {target} --pin {pin}" if pin else f"crptochat {target}"
+        else:
+            command = f"crptochat {target} --no-tls"
+        self.note("convite para este servidor, no terminal (copie a linha abaixo):", "ok")
+        self.note(command, "info")
+        self.note("o --pin faz o cliente recusar qualquer outro servidor já na primeira conexão: mande o convite "
+                  "por um canal em que a pessoa confie. Para o navegador, use o botão \"copiar convite\" da página "
+                  "/web/ com o wss:// deste servidor.", "info")
 
     async def cmd_whois(self, rest: str):
         if not valid_nick(rest.strip()):

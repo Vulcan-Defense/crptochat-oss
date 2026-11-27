@@ -15,14 +15,61 @@ window.crptoMetrics = marks;
 
 const remember = (k, v) => { try { v === undefined ? (v = localStorage.getItem(k)) : localStorage.setItem(k, v); } catch { v = null; } return v; };
 
+// This site serves the page only: there is no chat server behind it. Each person
+// connects to the server they use (or run), so there is no default but for local tests.
 function defaultWsUrl() {
   const host = location.hostname;
   if (host === "localhost" || host === "127.0.0.1") return "ws://localhost:7778";
-  if (location.protocol === "https:") return `wss://${location.host}/ws`;
   return "";
 }
 
-$("url").value = remember("crpto.url") || defaultWsUrl();
+// a url saved back when this site had a server (wss://<this site>/ws) is dropped
+function savedWsUrl() {
+  const saved = remember("crpto.url");
+  if (!saved) return "";
+  try { return new URL(saved).host === location.host ? "" : saved; } catch { return ""; }
+}
+
+// The same rules as crptoweb/wire.py check_url (which runs again on connect):
+// wss://, or ws:// only to this machine; no user, query or fragment.
+function validWsUrl(value) {
+  try {
+    const u = new URL(value);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+    return (u.protocol === "wss:" || (u.protocol === "ws:" && local)) && !!u.hostname &&
+           !u.username && !u.password && !u.search && !u.hash;
+  } catch { return false; }
+}
+
+// An invite link: /web/#servidor=wss://… (the fragment never reaches the site).
+// It only fills the field: the person reads where it points and then enters.
+function invitedWsUrl() {
+  const value = new URLSearchParams(location.hash.slice(1)).get("servidor");
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);  // not kept in the bar
+  return value && validWsUrl(value) ? value : "";
+}
+
+const invited = invitedWsUrl();
+$("url").value = invited || savedWsUrl() || defaultWsUrl();
+$("origin-hint").textContent = location.origin;
+if (invited) {
+  $("invite-note").hidden = false;
+  $("invite-server").textContent = invited;
+}
+
+// "copiar convite": the link to this page with the server in the field filled in
+$("invite-copy").addEventListener("click", async () => {
+  const server = $("url").value.trim(), out = $("invite-out");
+  if (!validWsUrl(server)) {
+    out.hidden = false; out.className = "hint err"; out.textContent = "informe antes um endereço wss:// válido";
+    return;
+  }
+  const link = `${location.origin}${location.pathname}#servidor=${encodeURIComponent(server).replace(/%3A/gi, ":").replace(/%2F/gi, "/")}`;
+  let copied = false;
+  try { await navigator.clipboard.writeText(link); copied = true; } catch {}
+  out.hidden = false; out.className = "hint";
+  out.textContent = (copied ? "convite copiado: " : "copie o convite: ") + link;
+});
 $("nick").value = remember("crpto.nick") || "";
 $("sensitive").checked = remember("crpto.sensitive") === "1";
 
@@ -420,9 +467,30 @@ $("form").addEventListener("submit", async (ev) => {
   launch(py, url, nick, pass, anon, sensitive);
 });
 
+// Opens and closes a WebSocket to the server before the chat starts, so a wrong
+// address or a server that refuses this page is told here, on the form, and not
+// as an endless "reconnecting" inside the chat.
+function probeWs(url, ms = 10000) {
+  return new Promise((done) => {
+    let ws;
+    try { ws = new WebSocket(url); } catch { done(false); return; }
+    const end = (ok) => { clearTimeout(timer); ws.onopen = ws.onerror = ws.onclose = null; try { ws.close(); } catch {} done(ok); };
+    const timer = setTimeout(() => end(false), ms);
+    ws.onopen = () => end(true);
+    ws.onerror = ws.onclose = () => end(false);
+  });
+}
+
 async function launch(py, url, nick, pass, anon, sensitive) {
-  remember("crpto.url", url); if (!anon) remember("crpto.nick", nick);
-  $("go").disabled = true; status("carregando o resto…");
+  const wire = py.pyimport("crptoweb.wire");
+  try { wire.check_url(url); } catch (err) { status(pyMessage(err), true); $("go").disabled = false; return; }
+  if (!anon) remember("crpto.nick", nick);
+  $("go").disabled = true; status("conectando ao servidor…");
+  if (!(await probeWs(url))) {
+    status(wire.connect_failure(url, location.origin), true); $("go").disabled = false; return;
+  }
+  remember("crpto.url", url);
+  status("carregando o resto…");
   try { await extras(py); } catch (err) { status("falha ao carregar: " + err.message, true); $("go").disabled = false; return; }
   status("conectando…");
   chatStarted = true;

@@ -21,7 +21,13 @@
        user name, the key passphrase is the password (new-password when creating a key) -->
   <form id="form" method="post" action="#">
     <label>servidor <input id="url" name="server" required spellcheck="false" autocomplete="url"
-                           placeholder="wss://chat.exemplo.org"></label>
+                           placeholder="wss://chat.exemplo.org" aria-describedby="url-help"></label>
+    <p id="invite-note" class="hint warn" hidden>Convite para <code id="invite-server"></code>: confira com quem te
+       mandou antes de entrar. A página só preencheu o campo; ela não conecta sozinha.</p>
+    <p id="url-help" class="hint">Informe o endereço <code>wss://</code> do servidor que você usa; o servidor precisa
+       aceitar esta página com <code>--ws-origin <span id="origin-hint">https://crptochat.acpt.app.br</span></code>.
+       <button type="button" id="invite-copy" class="link">copiar convite</button></p>
+    <p id="invite-out" class="hint" hidden></p>
     <label>nickname <input id="nick" name="username" required spellcheck="false" autocapitalize="off"
                            autocomplete="username" maxlength="20" pattern="[A-Za-z0-9_\-]{3,20}"></label>
     <label id="blob-row" hidden>chave cifrada (JSON)

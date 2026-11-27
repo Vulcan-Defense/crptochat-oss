@@ -53,7 +53,7 @@ button { font: 700 13px/1.2 var(--mono); color: #04121a; background: linear-grad
 button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(92, 255, 255, .2); }
 button:disabled { opacity: .45; cursor: wait; }
 #status { margin: 2px 0 0; min-height: 1.4em; font-size: 12.5px; color: var(--dim); }
-#status.err { color: var(--danger); }
+#status.err { color: var(--danger); white-space: pre-line; }
 #term { flex: 1; min-height: 0; padding: 2px; }
 #term .xterm { height: 100%; }
 #keys { display: flex; gap: 4px; padding: 5px; background: var(--panel); border-top: 1px solid rgba(126, 126, 190, .2); overflow-x: auto;
@@ -66,6 +66,8 @@ button:disabled { opacity: .45; cursor: wait; }
 h2 { font-size: 16px; color: var(--cyan); margin: 0; }
 .hint { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.55; }
 .hint.err, #keyinfo.err { color: var(--danger); }
+.hint.warn { color: var(--text); border-left: 3px solid var(--mag); padding-left: 8px; }
+#invite-out, #invite-note code { overflow-wrap: anywhere; word-break: break-all; }
 .hint.ok { color: var(--ok); }
 .fp { margin: 0; font-size: 13px; color: var(--text); word-spacing: 4px; }
 code { color: var(--cyan); font-size: 12px; word-break: break-all; }
