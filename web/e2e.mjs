@@ -145,6 +145,40 @@ try {
   const multi = await until(p, /▏linha um[^\n]*\n[^\n]*┃ +▏linha dois[^\n]*\n[^\n]*┃ +▏linha tres/, 30);
   check("Shift+Enter e o botão ↵ linha: uma mensagem em três linhas", !!multi,
         multi ? "" : (await termText(p)).split("\n").filter((l) => /linha/.test(l)).join(" | "));
+
+  // 2b'. /convite inside the chat, in the browser: the link to this page with this server
+  await p.locator(".xterm-helper-textarea").focus();
+  await p.keyboard.type("/convite"); await p.keyboard.press("Enter");
+  const invite = await until(p, /#servidor=ws:\/\/localhost:\d+/, 20);
+  check("/convite no navegador: link com o servidor", !!invite && invite.includes(`${origin}/#servidor=ws://localhost:${wsPort}`),
+        invite ? "" : (await termText(p)).split("\n").filter((l) => /convite|servidor=/.test(l)).join(" | "));
+  await ctx.close();
+
+  // 2e. an invite link fills the server field and says so, without connecting;
+  // the fragment leaves the address bar; a bad invite fills nothing
+  ctx = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+  p = await ctx.newPage();
+  p.on("pageerror", (e) => check("sem erro na página", false, e.message));
+  const invitedServer = `ws://localhost:${wsPort}`;
+  await p.goto(`${origin}/#servidor=${encodeURIComponent(invitedServer)}`);
+  await p.waitForSelector("#go:not([disabled])", { timeout: 120000 });
+  check("convite preenche o servidor", (await p.inputValue("#url")) === invitedServer);
+  check("convite avisa de onde veio e não conecta sozinho",
+        await p.isVisible("#invite-note") && (await p.textContent("#invite-server")) === invitedServer &&
+        await p.isVisible("#login") && !/conectando/.test(await p.textContent("#status")));
+  check("o #servidor= sai da barra de endereço", (await p.evaluate(() => location.hash)) === "");
+  await p.click("#invite-copy");
+  await p.waitForSelector("#invite-out:not([hidden])");
+  const copiedText = await p.textContent("#invite-out");
+  const expected = `${origin}/#servidor=${invitedServer}`;
+  const clip = await p.evaluate(() => navigator.clipboard.readText()).catch(() => "");
+  check("botão copiar convite", copiedText.includes(expected) && (clip === expected || /copie o convite/.test(copiedText)),
+        copiedText);
+  p = await ctx.newPage();                       // a new load: a hash change alone does not reload the page
+  await p.goto(`${origin}/#servidor=${encodeURIComponent("ws://evil.example")}`);
+  await p.waitForSelector("#go:not([disabled])", { timeout: 120000 });
+  check("convite inválido não preenche nada",
+        (await p.inputValue("#url")) !== "ws://evil.example" && !(await p.isVisible("#invite-note")));
   await ctx.close();
 
   // 2c. no server of this site: a page the server does not accept (403 on the

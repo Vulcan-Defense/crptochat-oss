@@ -11,7 +11,7 @@ import os
 os.environ["TEXTUAL_DRIVER"] = "crptoweb.driver:XtermDriver"
 
 from . import driver  # noqa: E402
-from .wire import check_url  # noqa: E402
+from .wire import check_url, invite_link  # noqa: E402
 
 HOME = "/data/home"            # IndexedDB-backed (mounted and synced by main.js)
 
@@ -56,6 +56,12 @@ async def start(terminal, url: str, nick: str, passphrase: str, guest: bool = Fa
     driver.TERMINAL = terminal
 
     host, port, tls = check_url(url)
+    from crptochat import tui as _tui
+    try:
+        from js import location
+        _tui.WEB_INVITE = invite_link(str(location.origin) + str(location.pathname), url)
+    except Exception:              # no page (smoke test under Node)
+        _tui.WEB_INVITE = ""
     from crptochat import crypto
     from crptochat.client import ChatClient
     from crptochat.store import Store

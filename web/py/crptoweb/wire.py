@@ -4,7 +4,7 @@ back into a protocol line."""
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 MAX_LINE = 256 * 1024      # the protocol's limit for one frame, in bytes (crptochat.protocol.MAX_LINE)
 LOCAL = ("localhost", "127.0.0.1", "::1")
@@ -58,3 +58,26 @@ def connect_failure(url: str, page_origin: str) -> str:
             "• se o servidor está no ar e com a entrada WebSocket ligada (--ws-port);\n"
             f"• se ele aceita esta página: --ws-origin {page_origin} (sem isso ele recusa com 403);\n"
             "• um servidor desativado (410) ou um proxy fora do ar aparecem igual.")
+
+
+INVITE_KEY = "servidor"
+
+
+def invite_link(page: str, ws_url: str) -> str:
+    """Link to the browser client with the server filled in. The address goes in
+    the fragment (after #), which the browser never sends to the site: it shows in
+    no request and no log. The page only fills the field; it does not connect."""
+    check_url(ws_url)
+    return f"{page.split('#', 1)[0]}#{INVITE_KEY}={quote(ws_url, safe=':/')}"
+
+
+def invite_from_fragment(fragment: str) -> str | None:
+    """The server address of an invite link's fragment, if it is a valid one."""
+    values = parse_qs(fragment.lstrip("#"), max_num_fields=4).get(INVITE_KEY)
+    if not values:
+        return None
+    try:
+        check_url(values[0])
+    except ValueError:
+        return None
+    return values[0]

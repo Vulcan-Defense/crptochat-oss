@@ -66,6 +66,8 @@ button:disabled { opacity: .45; cursor: wait; }
 h2 { font-size: 16px; color: var(--cyan); margin: 0; }
 .hint { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.55; }
 .hint.err, #keyinfo.err { color: var(--danger); }
+.hint.warn { color: var(--text); border-left: 3px solid var(--mag); padding-left: 8px; }
+#invite-out, #invite-note code { overflow-wrap: anywhere; word-break: break-all; }
 .hint.ok { color: var(--ok); }
 .fp { margin: 0; font-size: 13px; color: var(--text); word-spacing: 4px; }
 code { color: var(--cyan); font-size: 12px; word-break: break-all; }

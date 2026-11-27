@@ -30,8 +30,46 @@ function savedWsUrl() {
   try { return new URL(saved).host === location.host ? "" : saved; } catch { return ""; }
 }
 
-$("url").value = savedWsUrl() || defaultWsUrl();
+// The same rules as crptoweb/wire.py check_url (which runs again on connect):
+// wss://, or ws:// only to this machine; no user, query or fragment.
+function validWsUrl(value) {
+  try {
+    const u = new URL(value);
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+    return (u.protocol === "wss:" || (u.protocol === "ws:" && local)) && !!u.hostname &&
+           !u.username && !u.password && !u.search && !u.hash;
+  } catch { return false; }
+}
+
+// An invite link: /web/#servidor=wss://… (the fragment never reaches the site).
+// It only fills the field: the person reads where it points and then enters.
+function invitedWsUrl() {
+  const value = new URLSearchParams(location.hash.slice(1)).get("servidor");
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);  // not kept in the bar
+  return value && validWsUrl(value) ? value : "";
+}
+
+const invited = invitedWsUrl();
+$("url").value = invited || savedWsUrl() || defaultWsUrl();
 $("origin-hint").textContent = location.origin;
+if (invited) {
+  $("invite-note").hidden = false;
+  $("invite-server").textContent = invited;
+}
+
+// "copiar convite": the link to this page with the server in the field filled in
+$("invite-copy").addEventListener("click", async () => {
+  const server = $("url").value.trim(), out = $("invite-out");
+  if (!validWsUrl(server)) {
+    out.hidden = false; out.className = "hint err"; out.textContent = "informe antes um endereço wss:// válido";
+    return;
+  }
+  const link = `${location.origin}${location.pathname}#servidor=${encodeURIComponent(server).replace(/%3A/gi, ":").replace(/%2F/gi, "/")}`;
+  let copied = false;
+  try { await navigator.clipboard.writeText(link); copied = true; } catch {}
+  out.hidden = false; out.className = "hint";
+  out.textContent = (copied ? "convite copiado: " : "copie o convite: ") + link;
+});
 $("nick").value = remember("crpto.nick") || "";
 $("sensitive").checked = remember("crpto.sensitive") === "1";
 
