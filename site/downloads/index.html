@@ -556,10 +556,15 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
     <a class="btn ghost" href="/web/">▶ abrir o crptochat no navegador</a>
   </div>
 
-  <h3 class="web-label">como começar <span>3 passos</span></h3>
+  <h3 class="web-label">como começar <span>4 passos</span></h3>
   <ol class="steps web-steps">
-    <li>Abra <a href="/web/"><code>/web/</code></a> neste mesmo site. Na primeira visita a página baixa o cliente
-        (uns 15 MB); das próximas vezes ela abre do que ficou guardado no navegador.</li>
+    <li>Tenha um <b>servidor seu</b> com a entrada WebSocket ligada e aceitando esta página: este site só entrega a
+        página, não tem servidor de chat. Por exemplo, atrás de um proxy com TLS:
+        <code>crptochat-server --ws-port 7778 --ws-origin https://crptochat.acpt.app.br</code>
+        (ou TLS direto com <code>--ws-cert</code> e <code>--ws-key</code>; veja o README).</li>
+    <li>Abra <a href="/web/"><code>/web/</code></a> e informe o endereço <code>wss://</code> do seu servidor. Na
+        primeira visita a página baixa o cliente (uns 15 MB); das próximas vezes ela abre do que ficou guardado no
+        navegador.</li>
     <li>Entre com o seu <b>nick</b> e a sua <b>senha</b>. Já tem conta no terminal? Importe a mesma identidade: o
         arquivo <code>.json</code> da sua chave (o de <code>~/.config/crptochat/</code>, ou o que você guardou no
         gerenciador de senhas). É a mesma chave e o mesmo nick, e seus contatos continuam vendo a mesma fingerprint.</li>
@@ -574,7 +579,7 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
       <ul>
         <li>A chave é decifrada só no seu navegador e a senha nunca vai ao servidor.</li>
         <li>As mensagens saem cifradas de ponta a ponta, como no terminal.</li>
-        <li>A página fala com o servidor por WebSocket em <code>/ws</code> (a entrada WebGate do servidor), e o
+        <li>A página conecta no seu servidor por WebSocket (a entrada WebGate dele, <code>--ws-port</code>), e o
             servidor continua só repassando blobs cifrados.</li>
       </ul>
     </article>
@@ -607,8 +612,8 @@ if ($atual -eq $esperado) { "OK" } else { "NÃO CONFERE: não execute" }</code><
       <p>O mesmo cliente, sem instalar: abra <a href="/web/"><code>/web/</code></a> e entre com a sua chave. Na 1.21 a
          interface passou a caber em tela de celular.</p>
       <details><summary>como funciona</summary>
-        <p>O Python do cliente roda em WebAssembly na página e fala com o servidor por WebSocket
-           (<span class="k2">/ws</span>, a entrada WebGate). A chave fica cifrada no navegador. A confiança é no site
+        <p>O Python do cliente roda em WebAssembly na página e conecta no seu servidor por WebSocket
+           (<span class="k2">--ws-port</span>, a entrada WebGate). A chave fica cifrada no navegador. A confiança é no site
            servido por HTTPS, não num binário assinado com <code>--pin</code>: veja <a href="#web">ou use no navegador</a>.</p></details></article>
     <article class="card"><span class="v">1.12</span>
       <h3>Double Ratchet nas diretas</h3>

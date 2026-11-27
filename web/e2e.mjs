@@ -38,6 +38,10 @@ const site = http.createServer((req, res) => {
 });
 await new Promise((ok) => site.listen(0, "127.0.0.1", ok));
 const origin = `http://localhost:${site.address().port}`;
+// the same page from another origin: one the server was not told to accept
+const otherSite = http.createServer((req, res) => site.emit("request", req, res));
+await new Promise((ok) => otherSite.listen(0, "127.0.0.1", ok));
+const otherOrigin = `http://127.0.0.1:${otherSite.address().port}`;
 
 // the server, with the WebSocket entrance for that origin
 const wsPort = 20000 + Math.floor(Math.random() * 20000);
@@ -143,6 +147,39 @@ try {
         multi ? "" : (await termText(p)).split("\n").filter((l) => /linha/.test(l)).join(" | "));
   await ctx.close();
 
+  // 2c. no server of this site: a page the server does not accept (403 on the
+  // handshake), and a port nobody listens on, are told on the form, before the chat
+  // starts; the browser hides which one it was, so the text lists what to check
+  for (const [label, pageOrigin, url] of [
+    ["servidor que não aceita esta origem (403)", otherOrigin, `ws://localhost:${wsPort}`],
+    ["porta sem servidor", origin, "ws://localhost:9"],
+  ]) {
+    ctx = await browser.newContext();
+    p = await ctx.newPage();
+    p.on("pageerror", (e) => check("sem erro na página", false, e.message));
+    await p.goto(pageOrigin + "/");
+    await p.waitForSelector("#go:not([disabled])", { timeout: 120000 });
+    await p.fill("#url", url); await p.fill("#nick", "e2e_origem"); await p.check("#anon"); await p.click("#go");
+    await p.waitForFunction(() => document.querySelector("#status").classList.contains("err"), null, { timeout: 30000 });
+    const said = await p.textContent("#status");
+    check(`${label}: explicação no formulário, com o --ws-origin desta página`,
+          said.includes("não foi possível conectar") && said.includes(`--ws-origin ${pageOrigin}`) &&
+          await p.isVisible("#login") && await p.isEnabled("#go"), said);
+    await ctx.close();
+  }
+
+  // 2d. a server address saved back when this site had one (its own host) is dropped
+  ctx = await browser.newContext();
+  await ctx.addInitScript((u) => { try { localStorage.setItem("crpto.url", u); } catch {} }, `ws://localhost:${site.address().port}/ws`);
+  p = await ctx.newPage();
+  await p.goto(origin + "/");
+  await p.waitForSelector("#go:not([disabled])", { timeout: 120000 });
+  const field = await p.inputValue("#url");
+  check("endereço salvo do próprio site é ignorado", !field.includes(`:${site.address().port}`), field);
+  check("a ajuda mostra a origem que o servidor precisa aceitar",
+        (await p.textContent("#url-help")).includes(`--ws-origin ${origin}`));
+  await ctx.close();
+
   // 3. a browser without DecompressionStream (Safari < 16.4): a plain message, no crash
   ctx = await browser.newContext();
   await ctx.addInitScript(() => { delete window.DecompressionStream; });
@@ -159,6 +196,7 @@ try {
   await browser.close();
   server.kill();
   site.close();
+  otherSite.close();
   fs.rmSync(TMP, { recursive: true, force: true });
 }
 if (failures) { console.log(serverOut.slice(-2000)); process.exit(1); }

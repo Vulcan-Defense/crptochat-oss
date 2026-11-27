@@ -44,3 +44,17 @@ def frame_bytes(text: str) -> bytes | None:
     if len(data) > MAX_LINE:
         raise FrameTooBig(len(data))
     return data + b"\n"
+
+
+def connect_failure(url: str, page_origin: str) -> str:
+    """What to say when the WebSocket to the server does not open.
+
+    The browser hides why (a 403 for an origin the server does not accept, a 410,
+    a refused port, a bad certificate: all the same close, code 1006, so a page
+    cannot use WebSocket to probe a network); so this lists what to check, the
+    origin the server must accept first among them."""
+    return (f"não foi possível conectar em {url}. O navegador não informa o motivo; confira:\n"
+            "• o endereço: o wss:// do servidor que você usa (este site não tem servidor de chat);\n"
+            "• se o servidor está no ar e com a entrada WebSocket ligada (--ws-port);\n"
+            f"• se ele aceita esta página: --ws-origin {page_origin} (sem isso ele recusa com 403);\n"
+            "• um servidor desativado (410) ou um proxy fora do ar aparecem igual.")

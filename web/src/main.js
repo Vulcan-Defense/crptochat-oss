@@ -15,14 +15,23 @@ window.crptoMetrics = marks;
 
 const remember = (k, v) => { try { v === undefined ? (v = localStorage.getItem(k)) : localStorage.setItem(k, v); } catch { v = null; } return v; };
 
+// This site serves the page only: there is no chat server behind it. Each person
+// connects to the server they use (or run), so there is no default but for local tests.
 function defaultWsUrl() {
   const host = location.hostname;
   if (host === "localhost" || host === "127.0.0.1") return "ws://localhost:7778";
-  if (location.protocol === "https:") return `wss://${location.host}/ws`;
   return "";
 }
 
-$("url").value = remember("crpto.url") || defaultWsUrl();
+// a url saved back when this site had a server (wss://<this site>/ws) is dropped
+function savedWsUrl() {
+  const saved = remember("crpto.url");
+  if (!saved) return "";
+  try { return new URL(saved).host === location.host ? "" : saved; } catch { return ""; }
+}
+
+$("url").value = savedWsUrl() || defaultWsUrl();
+$("origin-hint").textContent = location.origin;
 $("nick").value = remember("crpto.nick") || "";
 $("sensitive").checked = remember("crpto.sensitive") === "1";
 
@@ -420,9 +429,30 @@ $("form").addEventListener("submit", async (ev) => {
   launch(py, url, nick, pass, anon, sensitive);
 });
 
+// Opens and closes a WebSocket to the server before the chat starts, so a wrong
+// address or a server that refuses this page is told here, on the form, and not
+// as an endless "reconnecting" inside the chat.
+function probeWs(url, ms = 10000) {
+  return new Promise((done) => {
+    let ws;
+    try { ws = new WebSocket(url); } catch { done(false); return; }
+    const end = (ok) => { clearTimeout(timer); ws.onopen = ws.onerror = ws.onclose = null; try { ws.close(); } catch {} done(ok); };
+    const timer = setTimeout(() => end(false), ms);
+    ws.onopen = () => end(true);
+    ws.onerror = ws.onclose = () => end(false);
+  });
+}
+
 async function launch(py, url, nick, pass, anon, sensitive) {
-  remember("crpto.url", url); if (!anon) remember("crpto.nick", nick);
-  $("go").disabled = true; status("carregando o resto…");
+  const wire = py.pyimport("crptoweb.wire");
+  try { wire.check_url(url); } catch (err) { status(pyMessage(err), true); $("go").disabled = false; return; }
+  if (!anon) remember("crpto.nick", nick);
+  $("go").disabled = true; status("conectando ao servidor…");
+  if (!(await probeWs(url))) {
+    status(wire.connect_failure(url, location.origin), true); $("go").disabled = false; return;
+  }
+  remember("crpto.url", url);
+  status("carregando o resto…");
   try { await extras(py); } catch (err) { status("falha ao carregar: " + err.message, true); $("go").disabled = false; return; }
   status("conectando…");
   chatStarted = true;

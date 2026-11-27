@@ -13,12 +13,21 @@ import asyncio
 from pyodide.ffi import create_proxy
 from js import WebSocket, console
 
-from .wire import FrameTooBig, frame_bytes
+from .wire import FrameTooBig, connect_failure, frame_bytes
+
+
+def _page_origin() -> str:
+    try:
+        from js import location
+        return str(location.origin)
+    except Exception:              # no page (smoke test under Node)
+        return "a origem desta página"
 
 
 class WebSocketStream:
-    def __init__(self, ws) -> None:
+    def __init__(self, ws, url: str = "") -> None:
         self.ws = ws
+        self.url = url
         self.inbox: asyncio.Queue[bytes] = asyncio.Queue()
         self.buf = b""
         self.closed = False
@@ -31,7 +40,7 @@ class WebSocketStream:
 
     @classmethod
     async def open(cls, url: str, timeout: float = 15) -> "WebSocketStream":
-        stream = cls(WebSocket.new(url))
+        stream = cls(WebSocket.new(url), url)
         try:
             await asyncio.wait_for(asyncio.shield(stream.opened), timeout)
         except BaseException:
@@ -64,7 +73,7 @@ class WebSocketStream:
 
     def _on_close(self, _event) -> None:
         if not self.opened.done():
-            self.opened.set_exception(ConnectionError("não foi possível conectar ao servidor (WebSocket)"))
+            self.opened.set_exception(ConnectionError(connect_failure(self.url or "o servidor", _page_origin())))
         if not self.closed:
             self.closed = True
             self.inbox.put_nowait(b"")

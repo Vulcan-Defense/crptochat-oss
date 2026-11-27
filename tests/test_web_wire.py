@@ -71,3 +71,14 @@ def test_the_interface_shows_tls_for_the_browsers_wss(home):
             await type_line(pilot, "/quit")
         await world.stop()
     asyncio.run(main())
+
+
+def test_a_connection_that_does_not_open_says_what_to_check():
+    """The browser hides why a WebSocket did not open (403 for a refused origin,
+    410, a closed port: all code 1006), so the message lists the causes, with the
+    exact --ws-origin the server needs for this page."""
+    text = wire.connect_failure("wss://chat.exemplo.org", "https://crptochat.acpt.app.br")
+    assert text.startswith("não foi possível conectar em wss://chat.exemplo.org.")
+    assert "--ws-origin https://crptochat.acpt.app.br" in text and "403" in text
+    assert "--ws-port" in text and "410" in text
+    assert "este site não tem servidor de chat" in text
