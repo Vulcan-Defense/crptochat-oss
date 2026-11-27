@@ -310,6 +310,13 @@ crptochat-server --ws-host 0.0.0.0 --ws-port 7778 --ws-origin https://app.exempl
   --ws-cert /etc/letsencrypt/live/HOST/fullchain.pem --ws-key /etc/letsencrypt/live/HOST/privkey.pem
 ```
 
+- **Convite:** com `--ws-public-url wss://chat.exemplo.org` (o endereço que as
+  pessoas digitam na página), o servidor imprime ao subir um link para cada
+  `--ws-origin`, por exemplo
+  `https://crptochat.acpt.app.br/web/#servidor=wss://chat.exemplo.org`. O
+  endereço vai depois do `#`, que o navegador nunca envia ao site; a página só
+  preenche o campo e conecta quando a pessoa entra. Dentro do chat, `/convite`
+  dá o mesmo link no navegador e, no terminal, o comando com o `--pin`.
 - **Origem obrigatória:** só páginas das origens em `--ws-origin` conectam
   (comparação exata; pode repetir a opção). Sem `Origin` ou com outra, a
   resposta é HTTP 403. Assim nenhum outro site consegue abrir uma conexão com

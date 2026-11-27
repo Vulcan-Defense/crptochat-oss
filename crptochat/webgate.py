@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ipaddress
 import ssl
+from urllib.parse import quote, urlsplit
 from typing import TYPE_CHECKING
 
 from .protocol import MAX_LINE
@@ -52,6 +53,30 @@ def _ws():
         raise WebSocketUnavailable(
             "o acesso por WebSocket precisa do pacote websockets: pip install 'crptochat[web]'") from exc
     return serve, ConnectionClosed
+
+
+INVITE_PAGE = "/web/"      # where an origin serves the browser client (as crptochat.acpt.app.br does)
+
+
+def check_public_url(url: str) -> str:
+    """The public address of this WebSocket entrance, as people type it on the
+    page: wss:// (ws:// only for this machine), host, optional port and path, and
+    nothing else. Same rules as the page's own check (web/py/crptoweb/wire.py)."""
+    parts = urlsplit(url)
+    local = parts.hostname in ("localhost", "127.0.0.1", "::1")
+    if parts.scheme != "wss" and not (parts.scheme == "ws" and local):
+        raise ValueError("--ws-public-url precisa ser wss:// (ws:// só para localhost)")
+    if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+        raise ValueError("--ws-public-url inválido")
+    return url
+
+
+def invite_links(origins: list[str], public_url: str) -> list[str]:
+    """One invite per accepted origin: the browser client's page with this server
+    filled in. The address goes after #, which the browser never sends to the site;
+    the page fills the field and connects only when the person presses enter."""
+    url = check_public_url(public_url)
+    return [f"{origin}{INVITE_PAGE}#servidor={quote(url, safe=':/')}" for origin in origins]
 
 
 def check_origin(origin: str) -> str:

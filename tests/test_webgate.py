@@ -249,3 +249,53 @@ def test_ws_bind_validation_blocks_remote_plain_ws_without_opt_in():
     with pytest.raises(ValueError, match="loopback"):
         validate_plain_ws_bind("0.0.0.0", False, None)
     validate_plain_ws_bind("0.0.0.0", True, None)
+
+def test_invite_links_are_what_the_page_reads():
+    """The link the server prints is the one the browser client fills its field
+    from (web/py/crptoweb/wire.py): same key, same validation."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "web", "py"))
+    from crptoweb import wire
+
+    from crptochat.webgate import check_public_url, invite_links
+    links = invite_links(["https://crptochat.acpt.app.br", "http://localhost:8123"], "wss://chat.exemplo.org:8443/ws")
+    assert links == ["https://crptochat.acpt.app.br/web/#servidor=wss://chat.exemplo.org:8443/ws",
+                     "http://localhost:8123/web/#servidor=wss://chat.exemplo.org:8443/ws"]
+    assert all(wire.invite_from_fragment(link.split("#", 1)[1]) == "wss://chat.exemplo.org:8443/ws" for link in links)
+    for bad in ("ws://chat.exemplo.org", "https://chat.exemplo.org", "wss://u:p@x.org", "wss://x.org/?a=1", "wss://"):
+        with pytest.raises(ValueError):
+            check_public_url(bad)
+
+
+@pytest.mark.parametrize("public, expected", [
+    ("wss://chat.exemplo.org", "  convite (navegador): https://crptochat.acpt.app.br/web/#servidor=wss://chat.exemplo.org"),
+    ("http://chat.exemplo.org", "  convite: não gerado — --ws-public-url precisa ser wss://"),
+])
+def test_the_server_prints_the_invite_when_it_starts(tmp_path, public, expected):
+    """A real start: with --ws-public-url the banner has the invite for each
+    --ws-origin; a bad one is reported and the server (and its WebSocket) still runs."""
+    import os
+    import subprocess  # nosec B404
+    import sys
+    import time
+    cmd = [sys.executable, "-m", "crptochat.server", "--data", str(tmp_path / "srv"), "--port", "0", "--no-tls",
+           "--no-stats", "--ws-port", "0", "--ws-origin", "https://crptochat.acpt.app.br", "--ws-public-url", public]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,  # nosec B603
+                            env={**os.environ, "PYTHONUNBUFFERED": "1"})
+    seen = []
+    try:
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            seen.append(line.rstrip("\n"))
+            if "convite" in line:
+                break
+        assert any(line.startswith(expected) for line in seen), "\n".join(seen)
+        assert any("cliente web: ws em loopback" in line for line in seen), "\n".join(seen)
+        assert proc.poll() is None                       # still running
+    finally:
+        proc.kill()
+        proc.wait(10)
